@@ -1,0 +1,57 @@
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+Copyright (c) 2024-2026 Grata Luma s.r.o.
+
+This license applies to the academic papers and documentation in the
+paper/ directory of this repository, including but not limited to:
+  - paper/v9/files/paper_v9_cz.tex, paper_v9_en.tex (main paper LaTeX sources)
+  - paper/v9/files/paper_v9_pop_cz.tex, paper_v9_pop_en.tex (popular companion sources)
+  - paper/v9/files/Grata_Cascade_*.pdf (compiled PDF outputs)
+  - paper/v9/CHANGES.md (changelog and scope-correction documentation)
+  - All earlier paper versions retained as historical artefacts in
+    paper/v6/, paper/v7/, paper/v8/
+
+You are free to:
+
+  Share — copy and redistribute the material in any medium or format
+  Adapt — remix, transform, and build upon the material for any purpose,
+          even commercially.
+
+The licensor cannot revoke these freedoms as long as you follow the license
+terms.
+
+Under the following terms:
+
+  Attribution — You must give appropriate credit, provide a link to the
+                license, and indicate if changes were made. You may do so
+                in any reasonable manner, but not in any way that suggests
+                the licensor endorses you or your use.
+
+  No additional restrictions — You may not apply legal terms or technological
+                               measures that legally restrict others from doing
+                               anything the license permits.
+
+Notices:
+
+  You do not have to comply with the license for elements of the material in
+  the public domain or where your use is permitted by an applicable exception
+  or limitation.
+
+  No warranties are given. The license may not give you all of the
+  permissions necessary for your intended use. For example, other rights such
+  as publicity, privacy, or moral rights may limit how you use the material.
+
+---
+
+Suggested citation:
+
+  Robert Jarušek. "Grata Cascade: Hash-based One-Shot Key Agreement via
+  Statistical Drift, as a Candidate for Hybrid Post-Quantum Key
+  Establishment." 2026. Available at: <repository URL>
+
+(Update with eprint.iacr.org DOI once preprint is published.)
+
+---
+
+Full legal code:        https://creativecommons.org/licenses/by/4.0/legalcode
+Human-readable summary: https://creativecommons.org/licenses/by/4.0/

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>GrataCascade.Core</RootNamespace>
+    <AssemblyName>GrataCascade.Core</AssemblyName>
+    <Nullable>disable</Nullable>
+    <LangVersion>10.0</LangVersion>
+    <NoWarn>$(NoWarn);SYSLIB0021;SYSLIB0023;SYSLIB0041;SYSLIB0045;CS0618;CS0168;CS0219;CS0414;CS0162;CS8032</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NistTests" />
+    <InternalsVisibleTo Include="HashFirstAttacker" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Managed-only AES backend pro Blazor WASM. System.Security.Cryptography.Aes
+         (Aes.Create() i deprecated AesManaged) hází 'Algorithm Aes is not supported
+         on this platform' v browser-wasm runtime. BouncyCastle je čistě managed
+         a ve WASM funguje. Behavior bit-identický s S.S.C.Aes při CBC + NoPadding. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0" />
+  </ItemGroup>
+
+</Project>

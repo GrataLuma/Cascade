@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "name": "reference",
+  "description": "Reference configuration v2 (post pivot 2026-05-02). Increased Final-slot security (h_P=8, M=8 -> lambda=120 bits, ~4 orders stronger than v1). CandidateMax filter disabled by default (set to -8 = same as cut limit); remains a configurable Tier-3 structural defense documented in paper section 4. MaxIterations 500 cap (F2 v1 max iter was 181). Replaces F4/F10/F13 baseline.",
+  "calibration_status": "reference_v2_pending_revalidation",
+  "protocol": {
+    "vector_length": 32,
+    "vector_count": 4096,
+    "hash_length_ab": 5,
+    "hash_length_ba": 2,
+    "hash_length_password": 8,
+    "seed_min_max": 4,
+    "aes_passed_vectors_count": 8,
+    "update_probability": 0.75,
+    "termination_threshold_log2": -512,
+    "cut_limit_probability_log2": -8,
+    "candidate_max_probability_log2": -8,
+    "cut_limit_safety_attempts": 1000,
+    "max_iterations": 500
+  },
+  "rng": {
+    "type": "crypto",
+    "seed": null
+  }
+}

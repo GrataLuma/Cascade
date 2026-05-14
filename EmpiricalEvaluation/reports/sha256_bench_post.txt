@@ -1,0 +1,20 @@
+bench-sha: input=32B, duration=5s per variant, SHA-NI CPUID=True
+
+  SHA256Managed.ComputeHash(byte[])            :       7 154 236 ops/s
+  SHA256.HashData(byte[])                      :       2 979 766 ops/s
+  SHA256.HashData(ReadOnlySpan, Span)          :       2 210 848 ops/s
+
+=== summary ===
+  SHA256Managed.ComputeHash        :       7 154 236 ops/s  (baseline, old V2 core)
+  SHA256.HashData(byte[])          :       2 979 766 ops/s  (0,42x)
+  SHA256.HashData(Span, Span)      :       2 210 848 ops/s  (0,31x)
+
+Speedup (Span vs Managed)          : 0,31x
+→ Speedup <10x despite SHA-NI CPUID support. Per-call overhead dominates at 32B input;
+
+=== macro: 20 protocol runs (seed=42) ===
+  total elapsed     : 00:00:31.0030765
+  per-run elapsed   : 1 550,15 ms
+  avg iterations    : 48,30
+  per-iter elapsed  : 32,094 ms
+  runs / sec        : 0,645

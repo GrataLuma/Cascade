@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "name": "f12_s1",
+  "description": "F12.a sweep: reference config with seed_min_max=1. Dense pool test for H2.",
+  "calibration_status": "f12_sweep_stale_v1",
+  "protocol": {
+    "vector_length": 32,
+    "vector_count": 4096,
+    "hash_length_ab": 5,
+    "hash_length_ba": 2,
+    "hash_length_password": 4,
+    "seed_min_max": 1,
+    "aes_passed_vectors_count": 16,
+    "update_probability": 0.75,
+    "termination_threshold_log2": -512,
+    "cut_limit_probability_log2": -8,
+    "candidate_max_probability_log2": -95,
+    "cut_limit_safety_attempts": 1000
+  },
+  "rng": { "type": "crypto", "seed": null }
+}

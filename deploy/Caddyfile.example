@@ -1,0 +1,42 @@
+# Grata Cascade demo — Caddy 2 reverse proxy
+#
+# Deployment target: /etc/caddy/Caddyfile on production VPS.
+# Copy this file as-is; Caddy auto-issues Let's Encrypt certs on first reload.
+#
+# Prerequisites before `systemctl reload caddy`:
+#   1. DNS A-records for apex + www point to VPS IP, propagated (TTL 300
+#      recommended; verify with `nslookup <domain> 8.8.8.8`)
+#   2. ufw allow 80/tcp and 443/tcp (HTTP-01 challenge needs port 80 reachable)
+#   3. Demo.Server bound to localhost:5000 via systemd unit ASPNETCORE_URLS
+
+# Apex: serve the demo
+gratacascade.com {
+    reverse_proxy localhost:5000
+    encode gzip zstd
+
+    # WebSocket upgrade for SignalR /hub/relay is automatic in Caddy 2 —
+    # no explicit transport block required.
+
+    # Modest hardening; Blazor WASM needs unsafe-eval for runtime,
+    # so CSP intentionally permissive. Tighten in a later iteration.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        # Remove server fingerprinting
+        -Server
+    }
+
+    log {
+        output file /var/log/caddy/gratacascade.access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+}
+
+# www -> apex permanent redirect
+www.gratacascade.com {
+    redir https://gratacascade.com{uri} permanent
+}

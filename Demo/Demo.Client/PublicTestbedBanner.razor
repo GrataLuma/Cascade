@@ -1,0 +1,39 @@
+@inject NavigationManager Nav
+@inject Demo.Client.Services.LanguageService Lang
+
+@if (showBanner)
+{
+    <div class="gc-testbed-banner" role="note" aria-label="@(Lang.IsCs ? "Upozornění o veřejném testovacím prostředí" : "Public testbed notice")">
+        <div class="gc-testbed-banner-inner">
+            <span class="gc-testbed-badge">@(Lang.IsCs ? "Veřejný testbed" : "Public testbed")</span>
+            <span class="gc-testbed-text">
+                @(Lang.IsCs
+                    ? "Akademický prototyp — nesdílejte sem citlivá data ani produkční klíče."
+                    : "Academic prototype — do not share sensitive data or production keys here.")
+            </span>
+        </div>
+    </div>
+}
+
+@code {
+    private bool showBanner;
+
+    protected override void OnInitialized()
+    {
+        // Banner viditelný kdekoli, kde hostname není localhost / loopback —
+        // tj. live demo (gratacascade.com) ano, lokální `dotnet run` ne.
+        var host = new Uri(Nav.BaseUri).Host;
+        showBanner = !(host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                       || host.Equals("127.0.0.1", StringComparison.Ordinal)
+                       || host.Equals("[::1]", StringComparison.Ordinal));
+
+        Lang.OnChanged += OnLangChanged;
+    }
+
+    private void OnLangChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Lang.OnChanged -= OnLangChanged;
+    }
+}

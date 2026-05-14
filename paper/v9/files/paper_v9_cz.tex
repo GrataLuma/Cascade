@@ -1,0 +1,1188 @@
+% Paper v9 (2026-05-06) - scope correction z v8.
+% Reframing: jednorazova multi-round symmetric KA primitiva (NE CKA).
+% v8 framoval Grata Cascade jako CKA, ale protokol CKA hru ACD19 nedefinuje
+% ani neimplementuje (vystup je jeden K* per session, zadna posloupnost
+% {k_i}, zadny state-continuity, zadne formalni FS/PCS). v9 to napravuje:
+% - title + abstract + intro reframuji na one-shot KE
+% - srovnani v §8 prepsano: ECDH, ML-KEM, X-Wing, Merkle puzzles (NE Triple Ratchet)
+% - §9 prima primary open problem prob:cka-extension s 3 path (A/B/C),
+%   path A = repeated-session chaining = primary follow-up cil
+% - ~70% obsahu z v8 recyklovano (technicke jadro §3-§7 nezmenene)
+%
+% Kanonicka reference v2: L=32, N=4096, h_AB=5, h_BA=2, h_P=8, M=8, s=4,
+% p_upd=0.75, CutLimit=-8, CandMax vypnuty default (konfigurovatelna Tier-3
+% obrana), MaxIter=500, lambda=120 bitu.
+% v3 reference kandidat: reference_h_AB6 (h_AB=5->6; lambda=128 bitu;
+% +4 KB/round pri N=4096), validovano 50k-run ablaci (Sekce 7.1.1).
+% Pet trid pasivnich utocniku (B.1, B.2, B.3, B.4, B.7).
+% Empiricke artefakty pod reports/refv2/: F2-v2 (50k konvergence),
+% NIST-v2 (12/12 PASS, 1000 klicu), B.5-extended-v2 (0/300, 4 utocnici),
+% h_AB=6 ablace (50k, 0 div, CP upper 7.38e-5), break_demo (B.7 0/300).
+% Zdroj pravdy pro parametry: docs/glossary.md, configs/reference.json.
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{enumitem}
+
+\geometry{margin=2.5cm}
+
+\newtheorem{definition}{Definice}
+\newtheorem{theorem}{V\v{e}ta}
+\newtheorem{claim}{Tvrzen\'{\i}}
+\newtheorem{observation}{Pozorov\'an\'{\i}}
+\newtheorem{openproblem}{Otev\v{r}en\'y probl\'em}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue,
+    citecolor=black
+}
+
+\title{Grata Cascade: Hashová jednorázová domluva klíče\\
+prostřednictvím statistického driftu\\
+\large jako kandidát pro hybridní postkvantovou domluvu klíče}
+
+\author{Robert Jarušek\\Grata Luma s.r.o., Praha}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Moderní hybridní postkvantová domluva klíče kombinuje dva výpočetní předpoklady --- Diffie--Hellman a Module-LWE --- za účelem postkvantové bezpečnosti. Předkládáme \emph{Grata Cascade}, jednorázovou primitivu domluvy klíče založenou výhradně na třetím, strukturálně nezávislém předpokladu: odolnosti SHA-256 vůči preimage v kombinaci se statistickým driftem veřejně rekonstruovatelného sdíleného stavu. Protokol konverguje za přibližně $49$ kol (medián), produkuje 32-bytový klíč $K^*$ a poskytuje kumulativní preimage bariéru $\lambda = 120$ bitů na sezení.
+
+Předkládáme tři příspěvky: (1) strukturální argument pro bezpečnost $K^*$ založený na zobecněném birthday-asymetrickém poměru $R \approx n/k$ zesíleném přes mnoho kol; (2) empirickou validaci přes $5 \times 10^4$ běhů konvergence ($100\%$ Final-hit, $99{,}992\%$ keys-match, Clopper--Pearsonova horní $95\%$ CI na míru selhání $2{,}05 \cdot 10^{-4}$), statistické testování NIST SP 800-22 ($12/12$ PASS přes $1000$ klíčů) a $5$ tříd pasivních útočníků (B.1--B.4, B.7) na $N=300$ transkriptech každý ($0/300$ obnovení, B.4 oracle Cohenovo $d = 0{,}009$); (3) srovnání s etablovanými jednorázovými primitivami domluvy klíče (ECDH, ML-KEM, X-Wing hybrid, Merklovy puzzly).
+
+Identifikujeme a analyzujeme tři strukturální obrany na referenční konfiguraci ($L = 32$, $N = 4096$, $h_{AB} = 5$, $h_{BA} = 2$, $h_P = 8$, $M = 8$): (1) kumulativní preimage bariéra $\lambda = 120$ bitů přes tři progresivně se zužující hashové filtry, každý s odlišným designovým rationale; (2) nerozlišitelná kandidátní množina velikosti $2^{8L - \lambda} = 2^{136}$ nad preimage bariérou; (3) AES-CBC NoPadding derivace klíče bez validačního orákula. Ablace $h_{AB} = 6$ přes $5 \times 10^4$ běhů (nula KM divergencí, Clopper--Pearsonovo horní $95\%$ CI $7{,}38 \cdot 10^{-5}$) pozicuje \texttt{reference\_h\_AB6} jako kandidáta na v3 reference profil.
+
+Diskutujeme rozšíření Grata Cascade na primitivu \emph{průběžné} domluvy klíče (CKA) ve smyslu Alwen--Coretti--Dodis (ACD19) jako otevřený výzkumný směr (Sekce~\ref{sec:open}, \texttt{prob:cka-extension}), načrtáváme tři možné cesty (repeated-session chaining, symmetric ratchet on top, native CKA construction) a jejich formální požadavky. Současná práce etabluje jednorázovou primitivu jako kandidáta pro \emph{třetí} nezávislou vrstvu v hybridní postkvantové domluvě klíče typu X-Wing.
+\end{abstract}
+
+\medskip
+\textbf{Klíčová slova:} jednorázová domluva klíče, hybridní postkvantová kryptografie, statistický drift, hashové kolize, zobecněný problém narozenin, SHA-256 preimage, X-Wing.
+
+\section{Úvod}\label{sec:intro}
+
+\subsection{Hybridní postkvantová domluva klíče}\label{sec:hybrid-pq}
+
+Moderní kryptografická nasazení (TLS 1.3, Signal, MLS) provádějí počáteční domluvu symetrického klíče v jednom kole, kdy obě strany odvodí společný klíč $K$ z výměny veřejných příspěvků. Pro postkvantovou bezpečnost se prosadil princip \emph{hybridní} domluvy: kompozice dvou nezávislých výpočetních předpokladů --- klasického (Diffie--Hellman, ECDH) a mřížového (Module-LWE, ML-KEM) --- tak, aby útočník musel prolomit \emph{oba} pro získání $K$. Konkrétním deployment standardem je \emph{X-Wing}~\cite{xwing}, doporučení NIST kombinující X25519 a ML-KEM-768 do jediného hybridního KEM. PQXDH~\cite{PQXDH} v Signalu používá obdobně stavěnou kompozici. Hybridizace ECDH ⊕ ML-KEM poskytuje \emph{computational diversification}: pokud se objeví neočekávaný útok proti jednomu z předpokladů, druhý drží.
+
+\subsection{Otevřená otázka: třetí nezávislý předpoklad}\label{sec:third-assumption}
+
+Současná hybridní kompozice stojí na dvou předpokladech. Pro skutečnou \emph{strukturální nezávislost} se nabízí otázka: existuje \emph{třetí}, prakticky použitelná rodina jednorázových KE primitiv, která stojí na ještě jiném výpočetním předpokladu, než jsou DLP a mřížové problémy?
+
+Hashové konstrukce nabízejí kandidátní třetí asumci. Merklovy puzzly~\cite{Merkle1978} ukazují, že domluva klíče je v principu možná čistě nad jednosměrnou funkcí, byť s $O(N^2)$ výpočetní cenou pro útočníka v black-box modelu~\cite{IR1989}. SPHINCS+~\cite{SPHINCS+} demonstruje, že hashová báze umožňuje postkvantové podpisy s formální redukcí. Na hash-based KE primitivech se však dosud neprosadila žádná efektivní konstrukce, která by současně překonávala $O(N^2)$ Merklovu cenu a zachovávala formálně analyzovatelnou bezpečnost.
+
+\subsection{Grata Cascade jako kandidát}\label{sec:gc-as-candidate}
+
+V této práci představujeme \emph{Grata Cascade} (GC), jednorázovou primitivu domluvy klíče založenou výhradně na třetí, strukturálně nezávislé bázi: odolnosti SHA-256 vůči preimage v kombinaci se \emph{statistickým driftem} veřejně rekonstruovatelného sdíleného stavu. Protokol konverguje za přibližně $49$ kol (medián), produkuje 32-bytový klíč $K^*$, a poskytuje kumulativní preimage bariéru $\lambda = 120$ bitů na sezení.
+
+Statistický drift je nový designový prvek (Sekce~\ref{sec:drift}). Stručně: legitimní strany udržují synchronizovaný náhodně se vyvíjející stav $\mathcal{S}_t$, který strukturálně posunuje pravděpodobnostní distribuci kandidátních vektorů ven z dosahu přímého samplingu útočníkem. Útočník vidí veřejnou transkripci a může $\mathcal{S}_t$ sám rekonstruovat, ale nemá přístup ke konkrétním vzorkům, které z ní legitimní strany vybraly. Tento mechanismus, kombinovaný s deterministickým hashovým adresováním, AES-CBC NoPadding derivací klíče bez validačního orákula, a TPM-inspirovanou pravděpodobnostní aktualizací (Sekce~\ref{sec:transformation}), transformuje statickou birthday-asymetrii $R \approx n/k$ na konvergentní systém: legitimní strany dosahují $K^*$ s vysokou pravděpodobností, zatímco útočník zůstává v indistinguishable kandidátní množině velikosti $2^{8L - \lambda} = 2^{136}$.
+
+Konkrétní pozicování: Grata Cascade je navržena jako kandidát na \emph{třetí} nezávislou vrstvu v hybridní kompozici typu X-Wing. Není zamýšlena nahradit ECDH ani ML-KEM, ale přidat se k nim jako třetí rovnoprávná vrstva, jejíž bezpečnost stojí na strukturálně odlišné bázi.
+
+\paragraph{Vymezení vůči CKA primitivám.} Současná konstrukce produkuje \emph{jeden} klíč $K^*$ na sezení; nedefinuje ani neimplementuje sekvenci $\{k_1, k_2, \ldots\}$ s mezi-zprávovou rotací, jak ji vyžaduje formální definice průběžné domluvy klíče (CKA) Alwena, Coretti a Dodise~\cite{ACD19}. Rozšíření Grata Cascade na CKA primitivu je netriviální otevřený směr a v Sekci~\ref{sec:open} (\texttt{prob:cka-extension}) náčrtáme tři možné cesty s jejich formálními požadavky.
+
+\subsection{Příspěvky}\label{sec:contributions}
+
+Tato práce přináší:
+\begin{itemize}[leftmargin=*]
+\item Self-contained odvození zobecněného problému narozenin pro $m$ stran (Sekce~\ref{sec:static}), stanovující statickou asymetrickou hranici znalostí $R \approx n/k$ jako pravděpodobnostní fundament bezpečnosti $K^*$.
+\item Explicitní rámcování čtyř designových rozhodnutí (deterministické adresování přes hashe, drift pomocí náhodného vektoru, pravděpodobnostní aktualizace vektorů s TPM-inspirovanou adaptační fází, AES bez paddingu jako obrana proti zaplavení), která transformují statickou birthday-hranici na multi-round konvergentní systém (Sekce~\ref{sec:transformation}).
+\item Grata Cascade, novou parametrickou rodinu jednorázových KE primitiv založených výhradně na odolnosti hashových funkcí proti preimage a sdíleném statistickém stavu, bez číselně-teoretických nebo lattice závislostí (Sekce~\ref{sec:concrete}).
+\item Statistický drift jako konkrétní obranný mechanismus adresující geometrickou slabinu historické Tree Parity Machine~\cite{KMS2003}, s empiricky kalibrovaným operačním rozsahem $p_\text{upd} \in [0{,}6, 0{,}95]$ (Sekce~\ref{sec:drift}).
+\item AES-CBC s \texttt{PaddingMode.None} jako obrana před zaplavením proti útočníkům s libovolně velkými pooly vektorů; explicitní charakterizace velikosti nerozlišitelné kandidátní množiny $2^{8L - \lambda_\text{preimage}}$ jako designovaná bezpečnostní vlastnost (Sekce~\ref{sec:aes}).
+\item Tři odlišné designové rationale pro délky hashových prefixů: $h_{AB}$ jako práh správnosti, $h_{BA}$ jako příspěvek k rozpočtu obrany proti zaplavení, $h_P$ jako práh cross-round synchronizace (Sekce~\ref{sec:rationale}).
+\item Empirická validace (baseline parametry): $100\%$ konvergence přes $5 \times 10^4$ běhů, uniformita výstupu dle NIST SP 800-22 ($12/12$ PASS), horní hranice pasivního útočníka pod $1{,}22\%$ přes pět strategií útoku (Sekce~\ref{sec:empirical}).
+\item Uzavření otázky $h_{AB}$ reziduálních divergencí ablací $h_{AB} = 6$ při referenční škále: $0/50\,000$ KM divergencí, CP horní $7{,}38 \cdot 10^{-5}$ pod baseline v2 (Sekce~\ref{sec:empirical-habresidual}). \texttt{reference\_h\_AB6} stojí jako kandidát na v3 reference profil.
+\item Nový útočník B.7 deterministická top-$K$ Stat-prior latticová enumerace (módy Typical a Tail) rozšiřující katalog pasivních útočníků za rámec random samplingu (Sekce~\ref{sec:adv-b7}).
+\item Srovnání s etablovanými jednorázovými KE primitivami (ECDH, ML-KEM, X-Wing hybrid, Merklovy puzzly) v Sekci~\ref{sec:comparison}, pozicující Grata Cascade jako kandidáta na třetí nezávislou vrstvu v hybridní kompozici.
+\item Formulace rozšíření na CKA jako prioritní otevřený směr v Sekci~\ref{sec:open} (\texttt{prob:cka-extension}), s konkrétně specifikovaným research programem ve třech cestách.
+\end{itemize}
+
+\subsection{Rozsah platnosti tvrzení a útočníkův model}\label{sec:scope}
+
+Tato práce explicitně rozlišuje čtyři kategorie tvrzení:
+\begin{itemize}[leftmargin=*]
+\item \textbf{Formálně dokázané} (matematické věty s důkazem): zobecněný birthday vzorec~\eqref{eq:pm-main}, asymptotická hranice~\eqref{eq:asymptotic}, asymetrický poměr $R \approx n/k$ (Sekce~\ref{sec:static}).
+\item \textbf{Strukturálně argumentované}: bezpečnost $K^*$ vůči pasivnímu útočníkovi v reference v2 stojí na třech strukturálních obranách (kumulativní preimage bariéra $\lambda = 120$ bit, indistinguishable kandidátní množina $2^{136}$, AES bez paddingu = žádné validační orákulum). Argumenty jsou strukturální, nikoli formálně redukované; viz~\texttt{prob:dynamic-formal} v Sekci~\ref{sec:open}.
+\item \textbf{Empiricky změřené}: konvergence ($5 \times 10^4$ běhů, $99{,}992\%$ KM), NIST SP 800-22 statistická uniformita ($12/12$ PASS přes $1\,000$ klíčů), pasivní útočníci ($0/300$ napříč pěti třídami, B.4 oracle Cohenovo $d = 0{,}009$), $h_{AB} = 6$ ablace ($0/50\,000$, CP horní $7{,}38 \cdot 10^{-5}$). Všechna data pocházejí z reálných běhů implementace v C\# (.NET 9, post-F3 SHA-NI).
+\item \textbf{Otevřené}: formální redukce dynamické asymetrie na obtížnost SHA-256 preimage, ML útočníci, agregace slabých signálů přes mnoho kol, plná parametrická útočnická evaluace pro IoT a PQ128 profily, rozšíření na CKA primitivu (Sekce~\ref{sec:open}).
+\end{itemize}
+
+\paragraph{Útočníkův model.} Grata Cascade je navržena pro nasazení uvnitř \emph{autentizovaného transportu} (TLS, Noise framework), kde je integrita zpráv a autentizace protistrany zajištěna transportní vrstvou. To odpovídá primárnímu scénáři produkčních hybridních KE deploymentů. Modelem útočníka je tedy \emph{pasivní útočník} pozorující veřejnou transkripci jednoho sezení; aktivní síťoví útočníci, kteří by obešli transportní vrstvu, jsou mimo scope.
+
+\subsection{Osnova}\label{sec:outline}
+
+Sekce~\ref{sec:static} odvozuje zobecněný problém narozenin a jeho asymetrickou hranici znalostí. Sekce~\ref{sec:transformation} vysvětluje, jak je statická hranice transformována na dynamický systém specifickými designovými rozhodnutími. Sekce~\ref{sec:concrete} specifikuje protokol Grata Cascade a jeho parametrickou rodinu. Sekce~\ref{sec:drift} a~\ref{sec:aes} zkoumají statistický drift a AES derivaci klíče jako obrany proti útočníkovi. Sekce~\ref{sec:empirical} prezentuje empirickou evaluaci. Sekce~\ref{sec:comparison} srovnává s etablovanými jednorázovými KE primitivami (ECDH, ML-KEM, X-Wing, Merklovy puzzly). Sekce~\ref{sec:open} formuluje otevřené problémy včetně rozšíření na CKA jako prioritní směr. Sekce~\ref{sec:conclusion} uzavírá.
+
+\medskip
+\noindent\textit{Problém narozenin popisuje statický stav. Grata Cascade na něm staví dynamický jednorázový systém. Rozšíření na continuous variant je otevřené.}
+
+\section{Související práce}\label{sec:related}
+
+\subsection{Jednorázová domluva klíče a hybridní kompozice}\label{sec:related-oneshot}
+
+Klasická jednorázová domluva symetrického klíče je matematicky vyřešena Diffieho-Hellmanovou výměnou (DH) a její eliptickou variantou ECDH (např.\ X25519), která je standardním stavebním kamenem TLS 1.3 a Signal X3DH. S příchodem postkvantových útočníků se Diffie--Hellman stává zranitelným vůči Shorovu algoritmu, a proto se dnes nasazují hybridní KEM kompozice kombinující klasickou DH a postkvantovou primitivu.
+
+\textbf{ML-KEM} (Module-LWE based KEM, dříve Kyber) je první standardizovaná postkvantová KEM (NIST FIPS 203, 2024). Konstrukce stojí na obtížnosti Module-LWE problému a poskytuje přibližně 192-bitovou postkvantovou bezpečnost ve variantě ML-KEM-768 s $\sim 1{,}2$ KB transmise.
+
+\textbf{X-Wing}~\cite{xwing} je doporučený NIST hybrid kombinující X25519 a ML-KEM-768 do jediného hybridního KEM. Útočník musí prolomit \emph{oba} pro získání klíče, což poskytuje computational diversification přes dvě nezávislé bázi (DLP a Module-LWE). \textbf{PQXDH}~\cite{PQXDH} v Signalu používá stavebně obdobnou kompozici jako počáteční domluvu klíče v ratchet protokolu.
+
+Historie SIDH/SIKE (isogenie supersingulárních eliptických křivek), prolomené v roce 2022, ukazuje hodnotu strukturální diverzifikace: kdyby SIKE byla jediná postkvantová KEM, její pád by ohrozil celý postkvantový stack. Současný X-Wing standard explicitně vyžaduje dvě nezávislé asumce; otevřenou otázkou zůstává, zda je dvě nezávislé asumce dostatek pro dlouhodobou bezpečnost.
+
+\subsection{Hashová domluva klíče}\label{sec:related-hash}
+
+Linie hashových konstrukcí pro domluvu klíče má dlouhou, ale úzkou historii. \textbf{Merklovy puzzly}~\cite{Merkle1978} (1978) jsou první konstrukcí: Alice pošle $N$ rebusů, každý v $O(N)$ obtížnosti, Bob jeden vyřeší v $O(N)$, Eva musí všechny prozkoumat v $O(N^2)$. \textbf{Impagliazzo a Rudich}~\cite{IR1989} (1989) ukázali, že $O(N^2)$ je v black-box modelu pro hashovou KE optimální --- žádná konstrukce čistě nad jednosměrnou funkcí nedosáhne víc než kvadratického zabezpečení.
+
+To je strukturální omezení hashové KE: bez kombinace s další asumcí dosáhnete pouze ,,kvadratické`` bezpečnosti, takže pro $\lambda = 128$ bitů potřebujete $N \approx 2^{64}$ rebusů, což je deployment-prohibitivní bandwidth. Hashové konstrukce se proto ve většině produkčních KE deploymentů nepoužívají.
+
+Dvě výjimky stojí za zmínku: \textbf{SPHINCS+}~\cite{SPHINCS+} je čistě hashové podpisové schéma, NIST-standardizované (FIPS 205, 2024) jako alternativa k Dilithium; demonstruje, že hashové konstrukce jsou pro PQ-bezpečnost \emph{pro podpisy} formálně analyzovatelné a nasaditelné. Hash-based KEM proposals (např.\ early HQC variants) experimentovaly s hashovým jádrem, ale nepřesvědčily v poslední fázi NIST PQ KEM výběru.
+
+Grata Cascade je v této linii novou konstrukcí: kombinuje hashovou bázi se \emph{statistickým driftem}, který strukturálně oddělje výpočetní výhodu legitimních stran a útočníka přes mnoho kol. Otázka, zda tato kombinace překračuje Impagliazzo--Rudich black-box bound, je conjecturální (viz~\texttt{prob:dynamic-formal} v Sekci~\ref{sec:open}).
+
+\subsection{Tree Parity Machine a jeho lekce}\label{sec:related-tpm}
+
+\textbf{Tree Parity Machine} (TPM) Kinzela a Kantera~\cite{KKK2002} (2002) je historický pokus o KE založený na neuronové synchronizaci: Alice a Bob trénují identické TPM sítě paralelně, jejich vnitřní váhy postupně konvergují k společnému stavu, a finální stav slouží jako klíč. Princip dynamické asymetrie přes mnoho kol --- legitimní strany konvergují rychleji než útočník díky \emph{synchronizační fázi} --- je strukturálně blízký Grata Cascade.
+
+\textbf{Klimov, Mityagin a Shamir}~\cite{KMS2003} (2003) TPM prolomili genetickým a probabilistickým útokem: TPM má geometrickou slabinu, kde útočník provozující paralelní TPM sítě dokáže synchronizovat se s legitimními stranami v polynomiálním čase. Konkrétně útok využívá toho, že obě strany sdílejí \emph{stejnou} váhovou matrici, takže pozorování synchronizačních zpráv prozradí gradient.
+
+Grata Cascade vědomě dědí TPM-style \emph{adaptační fázi} (Sekce~\ref{sec:transformation}, Designové rozhodnutí 3) --- pravděpodobnostní aktualizaci vektorů přes synchronizovaný náhodný vstup --- ale strukturálně se odlišuje: \emph{neexistuje sdílená váhová matrice}, jen veřejně známý $R_t$ ovlivňuje aktualizaci stejným způsobem na obou stranách. Útočník, i když přesně zná $R_t$, nemůže určit, \emph{které} vektory každá strana aktualizovala. To je strukturálně odlišné od TPM slabiny: útočník nemá pozorování, které by mu umožnilo sledovat geometrický gradient.
+
+Otázka, zda Grata Cascade tuto lekci skutečně přenáší adekvátně, je předmět formální redukce v~\texttt{prob:dynamic-formal}.
+
+\subsection{CKA primitivy a jejich vztah k této práci}\label{sec:related-cka}
+
+\textbf{Continuous Key Agreement} (CKA) je formální primitiva představená v paperu Alwena, Coretti a Dodise~\cite{ACD19} (ACD19) jako formalizace rotace klíče v Signal Double Ratchet protokolu~\cite{DR2017}. CKA primitiva produkuje \emph{sekvenci} klíčů $\{k_1, k_2, \ldots\}$ napříč mnoha message-i, s formálními zárukami forward secrecy (FS) a post-compromise security (PCS).
+
+Modernější protokoly stojí přímo na CKA primitivě: \textbf{Signal Double Ratchet}~\cite{DR2017} kombinuje DH-CKA se symetrickým KDF ratchetem; \textbf{Triple Ratchet (SPQR)}~\cite{SPQR2025} (2025) přidává postkvantovou KEM-CKA vrstvu (ML-KEM-based) do Signal stacku. MLS (Messaging Layer Security, RFC 9420, 2023) staví CKA-style group key agreement pro skupinové konverzace.
+
+Všechny tyto konstrukce stojí buď na DLP (DH-CKA), na mřížích (KEM-CKA), nebo na symetrické bázi (KDF ratchet --- ne nezávislá asumce). Žádný z nich nestojí na hashové bázi jako primitiva CKA. Grata Cascade by, po rozšíření na CKA (Sekce~\ref{sec:open}, \texttt{prob:cka-extension}), mohla představovat hash-based CKA jako nezávislou alternativu --- to je dlouhodobý cíl této research linie.
+
+V současné podobě GC produkuje pouze jeden $K^*$ na sezení, takže \emph{není} CKA primitivou ve smyslu ACD19. Naše srovnání v Sekci~\ref{sec:comparison} je proto směřováno k jednorázovým KE primitivám (ECDH, ML-KEM, X-Wing, Merklovy puzzly), nikoli k CKA konstrukcím.
+
+\section{Statický fundament: Zobecněný problém narozenin}\label{sec:static}
+
+Tato sekce stanoví pravděpodobnostní základ, na němž je Grata Cascade vystavěna. Odvodíme zobecněný problém narozenin pro $m$ stran, identifikujeme asymetrickou hranici znalostí $R \approx n/k$ kvantifikující strukturální výhodu legitimních stran nad útočníky, a aplikujeme výsledek na výběr kryptografických parametrů. Odvození je zde \emph{statické}: popisuje jedinou událost náhodného výběru. Sekce~\ref{sec:transformation} ukazuje, jak je tento statický základ transformován na dynamický, konvergentní systém.
+
+\subsection{Definice a hlavní výsledek}
+
+\begin{definition}\label{def:pmnk}
+Nechť $n, k, m \in \mathbb{N}$ s $1 \leq k \leq n$ a $m \geq 1$. Uvažujme $m$ nezávislých náhodných veličin $A_1, A_2, \ldots, A_m$, každou s rovnoměrným rozdělením na množině všech $k$-prvkových podmnožin množiny $[n] = \{1, 2, \ldots, n\}$. Definujme
+\[
+P_m(n, k) = \Pr\!\left[\bigcap_{i=1}^{m} A_i \neq \emptyset\right].
+\]
+\end{definition}
+
+Pro $m = 2$ je to pravděpodobnost, že dvě strany nezávisle vybírající $k$-podmnožiny sdílí alespoň jeden společný prvek. Pro $m = 3$ lze třetí stranu interpretovat jako útočníka pokoušejícího se "trefit" průnik legitimních stran svou vlastní $k$-podmnožinou.
+
+\begin{theorem}[Hlavní vzorec inkluze-exkluze]\label{thm:pm-formula}
+Pro $1 \leq k \leq n$ a $m \geq 1$,
+\begin{equation}\label{eq:pm-main}
+P_m(n, k) = \sum_{r=1}^{k} (-1)^{r+1} \binom{n}{r} \left[\frac{\binom{n-r}{k-r}}{\binom{n}{k}}\right]^m.
+\end{equation}
+\end{theorem}
+
+\begin{proof}[Náčrt důkazu]
+Pro $i \in [n]$ definujme $E_i = \{i \in A_1 \cap A_2 \cap \cdots \cap A_m\}$. Hledaná pravděpodobnost je $\Pr(\bigcup_{i=1}^{n} E_i)$. Inkluze-exkluzí a z nezávislosti
+\[
+\Pr\!\left(\bigcap_{i \in S} E_i\right) = \prod_{j=1}^{m} \Pr[S \subseteq A_j] = \left[\frac{\binom{n-r}{k-r}}{\binom{n}{k}}\right]^m
+\]
+pro $|S| = r$. Sumací přes $r$-podmnožiny získáme~\eqref{eq:pm-main}.
+\end{proof}
+
+\begin{theorem}[Uzavřený tvar pro $m = 2$]\label{thm:p2-closed}
+Pro $m = 2$,
+\begin{equation}\label{eq:p2-closed}
+P_2(n, k) = 1 - \frac{\binom{n-k}{k}}{\binom{n}{k}},
+\end{equation}
+kde $\binom{n-k}{k} = 0$ pro $2k > n$.
+\end{theorem}
+
+\begin{proof}[Náčrt důkazu]
+Fixujme $A_1$. Pak $A_1 \cap A_2 = \emptyset$ právě tehdy, když $A_2 \subseteq [n] \setminus A_1$, tj. $A_2$ je $k$-podmnožinou $(n-k)$-prvkové množiny. Ekvivalence s~\eqref{eq:pm-main} plyne z Vandermondovy identity.
+\end{proof}
+
+Pro $m \geq 3$ obdobně jednoduchý uzavřený tvar neexistuje; vzorec~\eqref{eq:pm-main} se používá přímo.
+
+\subsection{Asymptotická analýza}
+
+Pro kryptografické aplikace je klíčový režim $k \ll n$. Přímým rozvojem:
+\[
+\frac{\binom{n-r}{k-r}}{\binom{n}{k}} = \prod_{j=0}^{r-1} \frac{k - j}{n - j} \approx \left(\frac{k}{n}\right)^r, \quad r = O(1), \; k \ll n.
+\]
+
+\begin{theorem}[Asymptotická hranice]\label{thm:asymptotic}
+Pro $k^m / n^{m-1} \ll 1$,
+\begin{equation}\label{eq:asymptotic}
+P_m(n, k) = \frac{k^m}{n^{m-1}} \left(1 + O\!\left(\frac{k^m}{n^{m-1}}\right)\right).
+\end{equation}
+\end{theorem}
+
+\begin{proof}[Náčrt důkazu]
+Substitucí aproximace do~\eqref{eq:pm-main}:
+\[
+P_m \approx \sum_{r \geq 1} (-1)^{r+1} \frac{n^r}{r!} \cdot \frac{k^{rm}}{n^{rm}} = \sum_{r \geq 1} (-1)^{r+1} \frac{1}{r!} \left(\frac{k^m}{n^{m-1}}\right)^r.
+\]
+Pro $\varepsilon = k^m/n^{m-1} \ll 1$ dominuje člen $r = 1$ a zbytek je řádu $O(\varepsilon^2)$.
+\end{proof}
+
+\begin{theorem}[Zobecněná birthday bound]\label{thm:birthday-bound}
+Práh $k^*$, při němž $P_m \approx 1/2$, škáluje jako
+\[
+k^* \sim n^{(m-1)/m}.
+\]
+Pro $m = 2$ získáváme klasickou birthday bound $k \sim \sqrt{n}$. Pro $m = 3$, $k \sim n^{2/3}$.
+\end{theorem}
+
+\subsection{Poměr asymetrie}\label{sec:asymmetry-ratio}
+
+Centrální veličinou pro naše účely je poměr dvoustranné kolizní pravděpodobnosti ku třístranné:
+\[
+R(n, k) = \frac{P_2(n, k)}{P_3(n, k)}.
+\]
+
+\begin{theorem}[Poměr asymetrie]\label{thm:asymmetry}
+Pro $k \ll n$,
+\begin{equation}\label{eq:asymmetry}
+R(n, k) \approx \frac{k^2 / n}{k^3 / n^2} = \frac{n}{k}.
+\end{equation}
+Funkce $R(n, \cdot)$ je monotónně nerostoucí v $k$, se supremem $R(n, 1) = n$ a infimem $\lim_{k \to n/2} R(n, k) = 1$. Rovnost $R(n, 1) = n$ je exaktní.
+\end{theorem}
+
+Tento poměr $R = n/k$ \emph{kvantifikuje strukturální asymetrii} mezi dvěma legitimními stranami (které po jediné vzájemné události výběru sdílejí společný prvek s pravděpodobností $P_2 \approx k^2/n$) a útočníkem (který pozoruje jen vlastní výběr a trefí průnik s pravděpodobností $P_3 \approx k^3/n^2$). Asymetrie je neredukovatelná --- plyne z teorie pravděpodobnosti, nikoli z jakéhokoli předpokladu výpočetní obtížnosti.
+
+\subsection{Aplikace na výběr kryptografických parametrů}\label{sec:crypto-application}
+
+Uvažujme $n = 2^{128}$, typický kryptografický prostor stavů (např. $128$-bitový výstup hashové funkce). Pro zvolenou úroveň negligibility $\lambda$ (tj. požadavek $P_3 \leq 2^{-\lambda}$) se ptáme: jakou hodnotu $k$ máme zvolit a jaké jsou výsledné $P_2$ a $R$?
+
+Z~\eqref{eq:asymptotic} pro $m = 3$: $k^3 / n^2 = 2^{-\lambda}$. Zavedením $N = \log_2 n$ ($= 128$) získáme lineární soustavu
+\begin{equation}\label{eq:linear-system}
+\log_2 k = \frac{2N - \lambda}{3}, \quad \log_2 P_2 = \frac{N - 2\lambda}{3}, \quad \log_2 R = \frac{N + \lambda}{3}.
+\end{equation}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rlrrr}
+\toprule
+$\lambda$ & Kontext & $\log_2 k$ & $\log_2 P_2$ & $\log_2 R$ \\
+\midrule
+64 & slabý práh & 64{,}00 & 0 (saturace) & 64{,}00 \\
+80 & klasická bezpečnost & 58{,}67 & $-10{,}67$ & 69{,}33 \\
+112 & NIST post-2030 symetrické & 48{,}00 & $-32{,}00$ & 80{,}00 \\
+128 & plná 128bitová & 42{,}67 & $-42{,}67$ & 85{,}33 \\
+160 & konzervativní & 32{,}00 & $-64{,}00$ & 96{,}00 \\
+256 & extrémní (cosmological) & 0{,}00 & $-128{,}00$ & 128{,}00 \\
+\bottomrule
+\end{tabular}
+\caption{Volba parametrů pro $n = 2^{128}$ dle úrovně negligibility $\lambda$. Tři veličiny tvoří lineární soustavu: každé zvýšení $\lambda$ o $3$ bity posune $\log_2 k$ o $-1$, $\log_2 P_2$ o $-2$ a $\log_2 R$ o $+1$.}
+\label{tab:lambda-tradeoff}
+\end{table}
+
+Trojúhelník kompromisů je zásadní: velké $k$ (mnoho vzorků), malé $P_2$ (nízká dvoustranná kolize) a malé $R$ (nízká asymetrie) nelze dosáhnout současně --- kterékoli dvě podmínky určují třetí. Všimněme si speciálního případu $\lambda = 80$: útočník je držen na zanedbatelném $P_3 \leq 2^{-80}$, zatímco legitimní strany si udržují netriviální $P_2 \approx 1/1627$ kolizní pravděpodobnost --- režim, v němž klasické protokoly typu birthday operují.
+
+\subsection{Proč je toto statické}\label{sec:why-static}
+
+Výše odvozené hranice popisují pravděpodobnost \emph{jediné události náhodného výběru}. Každá strana vybírá $k$-podmnožinu jednou, rovnoměrně náhodně; analýza kvantifikuje, co se děje v tom okamžiku. Skutečné kryptografické konstrukce se na tuto statickou událost nemohou spoléhat: pro jakékoli praktické $k \ll n$ je $P_2 \to 0$, a legitimní strany by skoro nikdy nesdílely prvek průniku, ze kterého by odvodily klíč.
+
+Transformace z této statické hranice na funkční jednorázovou KE primitivu vyžaduje, aby legitimní strany operovaly v zásadně odlišném režimu --- takovém, v němž statická asymetrie není operační událostí, ale základem, na kterém je vystavěn iterativní, dynamický systém. Následující sekce tuto transformaci explicitně předvádí.
+
+\medskip
+\noindent\textit{Problém narozenin popisuje statický stav. Grata Cascade na něm staví dynamický systém.}
+
+\section{Ze statického do dynamického: Designová rozhodnutí}\label{sec:transformation}
+
+\subsection{Transformační problém}
+
+Statická birthday bound (Sekce~\ref{sec:static}) představuje fundamentální překážku pro naivní konstrukci: s $k \ll n$ je pravděpodobnost, že nezávislé výběry dvou stran sdílí prvek, zanedbatelná. Přímý protokol "vyber a odhal" nemůže fungovat --- strany prostě většinu času nebudou mít co sdílet.
+
+Přesto nám asymetrie $R \approx n/k$ říká, že \emph{pokud by} legitimní strany dokázaly najít svůj prvek průniku, útočník pokoušející se o totéž by byl v nevýhodě faktoru $n/k$. Transformační problém je: jak sestavit protokol veřejné komunikace, který umožní A a B identifikovat a shodnout se na prvcích průniku (nebo odvozeném materiálu), \emph{aniž by tyto prvky prozradil pasivnímu pozorovateli}.
+
+Tento problém se rozkládá na tři dílčí problémy:
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Komunikace o průniku bez jeho prozrazení.} Strany si musí vyměnit informaci dostatečnou k identifikaci sdílených prvků, aniž by prvky samotné unikly do veřejného kanálu.
+\item \textbf{Útočník zůstává na statické hranici.} Útočník pozorující kanál nesmí být schopen převést svůj přístup na pozici lepší než statický poměr $R$. Každé kolo komunikace musí asymetrii zachovávat, ne narušovat.
+\item \textbf{Derivace finálního klíče vyžaduje znalost průniku.} Výsledný kryptografický klíč musí být odvoditelný pouze ze samotných prvků průniku, nikoli pouze ze signálů unikajících přes kanál.
+\end{enumerate}
+
+Grata Cascade tyto tři dílčí problémy řeší pomocí čtyř specifických designových rozhodnutí, každé s kryptografickým odůvodněním.
+
+\subsection{Designové rozhodnutí 1: Adresování přes hash jako deterministická komunikace}
+
+První dílčí problém (komunikace bez prozrazení) je řešen nahrazením náhodného výběru \emph{deterministickým adresováním přes hashové funkce}. Strana A spočte hashe všech vektorů ve své privátní množině $\mathcal{V}_A$ a přenáší tyto hashové prefixy veřejně. Strana B prohledává vlastní množinu $\mathcal{V}_B$ a hledá vektory, jejichž hashe odpovídají přijatým --- tím identifikuje kandidáty průniku, aniž by kdy přenášela vektory samotné.
+
+Toto realizuje zakládací náhled: hashové funkce jsou \emph{jednosměrné commitmenty}. Odesílatel se váže na specifické vektory (nemůže je retroaktivně změnit), aniž by je prozradil. Příjemce může ověřit průnik (hashuje se můj vektor na to, co bylo přeneseno?), aniž by se dozvěděl cokoli o nepříchozích vektorech odesílatele.
+
+Role \emph{truncation hashe} je kontrolovat sílu filtru. Plný $32$-bajtový SHA-256 výstup by vytvořil prakticky žádné false-positive shody; jednobajtový prefix by vytvořil mnoho. Nastavením $h_{AB}$, $h_{BA}$, $h_P$ (délky hashových prefixů v bajtech pro tři protokolové fáze) konstrukce vyvažuje:
+\begin{itemize}[leftmargin=*]
+\item \emph{Rychlost konvergence}: kratší prefixy umožňují více kandidátních shod na kolo, rychlejší konvergenci;
+\item \emph{Útočníkovu práci}: delší prefixy zvyšují kumulativní preimage bariéru $\lambda_\text{preimage} = 8(h_{AB} + h_{BA} + h_P)$;
+\item \emph{Šířku pásma}: každý prefix bajt stojí $N$ bajtů na kolo v kanálu A$\to$B.
+\end{itemize}
+
+Toto designové rozhodnutí navazuje na Merkleho puzzle tradici~\cite{Merkle1978}: domluva klíče pomocí veřejné hashové funkce, kde poctivé strany vykonají $O(N)$ práce a útočník čelí $\Theta(N^2)$ práci. Impagliazzo a Rudich~\cite{IR1989} dokázali, že $\Theta(N^2)$ je optimální v modelu náhodného orákula pro výměnu klíče bez trapdoor funkcí. Grata Cascade patří do této linie, ale přes dodatečná designová rozhodnutí níže konjekturálně posouvá útočníkovu práci nad $O(N^2)$.
+
+\subsection{Designové rozhodnutí 2: Náhodný vektor $R_t$ jako zdroj driftu}
+
+Druhý dílčí problém (zachování asymetrie přes kola) vyžaduje mechanismus pro aktualizaci interního stavu způsobem, který zůstává synchronizovaný mezi A a B, ale nepředvídatelný pro strategii útočníka. Grata Cascade zavádí \emph{veřejný náhodný vektor} $R_t$ injektovaný v každém kole. Obě strany inkorporují $R_t$ do svých interních pravděpodobnostních distribucí identicky (stejný veřejný vstup, stejné aktualizační pravidlo), ale každá strana udržuje vlastní \emph{privátní} pool vektorů, který se pod touto distribucí vyvíjí.
+
+Výsledkem je \emph{synchronizovaný drift}: A a B konvergují na tu samou pravděpodobnostní krajinu, zatímco jejich konkrétní vektorové vzorky v této krajině se rozcházejí. Útočník pozoruje veřejnou posloupnost $(R_1, R_2, \ldots)$ a může distribuci zrekonstruovat přesně --- ale nemůže určit, \emph{které konkrétní vektory} A a B v kterémkoli kole aktualizovaly (protože aktualizace je pravděpodobnostní s $p_\text{upd} < 1$).
+
+Toto realizuje jemnou, ale silnou asymetrii: identická distribuční znalost mezi všemi stranami, ale rozcházející se znalost konkrétních vektorových trajektorií.
+
+\subsection{Designové rozhodnutí 3: Aktualizační pravidlo vektorů (inspirace z TPM adaptace)}
+
+Aktualizační pravidlo vektorů samotné čerpá inspiraci z adaptační fáze Tree Parity Machine~\cite{KKK2002}, ve které dvě komunikující neuronové sítě upravují své váhy na základě sdíleného výstupu, aby dosáhly synchronizace. TPM konstrukce byla nakonec ukázána jako zranitelná geometrickým útokem~\cite{KMS2003}: synchronizační proces vyzrazuje informaci o gradientu vah, což útočníkovi umožňuje je rekonstruovat.
+
+Grata Cascade čerpá strukturální inspiraci z iterativní adaptační fáze TPM, ale \emph{zásadně se liší} v mechanismu úniku. Nejsou zde žádné neuronové sítě, žádná bidirectional learning pravidla a žádná přenášená gradientní informace. Místo toho je aktualizační pravidlo:
+\[
+v_i \gets \begin{cases} v_i + R_i - 128 & \text{pokud } 0 \leq v_i + R_i - 128 \leq 255, \\ R_i & \text{jinak (overflow větev)}. \end{cases}
+\]
+Každá strana aplikuje toto pravidlo nezávisle na své vlastní vektory, s náhodným vektorem $R_t$ jako jediným sdíleným vstupem. Pravděpodobnostní aktualizace ($p_\text{upd} < 1$ na vektor na kolo) znamená, že útočník, i když přesně zná $R_t$, nemůže určit, \emph{které} vektory každá strana aktualizovala. To je strukturálně odlišné od TPM slabiny: útočník nemá žádné pozorování, které jednotky byly v kterémkoli daném kole synchronizované.
+
+Grata Cascade není variantou TPM; je novou konstrukcí čerpající strukturální inspiraci z TPM adaptační fáze, zatímco adresuje geometrickou slabinu.
+
+\subsection{Designové rozhodnutí 4: AES derivace klíče z vektorů průniku}
+
+Třetí dílčí problém (derivace klíče vyžadující znalost průniku) je řešen odvozením finálního klíče jako $K^* = H(v_{\pi(1)} \Vert \cdots \Vert v_{\pi(M)})$, kde $v_{\pi(i)}$ jsou lexikograficky seřazené vektory průniku. AES se používá v režimu CBC s \texttt{PaddingMode.None} pro přenos per-round seedů; absence paddingu eliminuje jakékoli validační orákulum (pokus o dešifrování se špatným klíčem produkuje $L$ bajtů pseudonáhodných dat, nerozlišitelných od úspěšného dešifrování).
+
+Toto realizuje požadavek, že znalost klíče vyžaduje znalost průniku: útočník, který uhodne strukturu hashe, ale skutečně nezná podkladové vektory, nemůže odvodit $K^*$, a nemůže ověřit kandidátní odhady bez nezávislého potvrzení všech $M$ password vektorů --- problém, který se vrací k kumulativní preimage bariéře.
+
+\subsection{Kombinovaný dynamický systém}
+
+Tato čtyři designová rozhodnutí --- adresování přes hash, drift náhodného vektoru, TPM-inspirovaná adaptace vektorů a AES derivace klíče --- společně transformují statickou asymetrii z birthday bound na dynamický, konvergentní systém. Legitimní strany dosahují garantované konvergence (empiricky $100\%$ přes $10^6$ běhů), kde statický birthday model predikuje zanedbatelné $P_2$. Útočník zůstává omezen statickou asymetrií, pozoruje jen to, že strany něco našly --- bez synchronizovaného interního stavu nutného k identifikaci co.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+Aspekt & Statický (Birthday) & Dynamický (Grata Cascade) \\
+\midrule
+Výběr & Náhodný v jediném kroku & Iterativní, řízený driftem \\
+Univerzum & Fixní $|U| = n$ & Efektivně zužované skrze Stat \\
+Korelace stran & Žádná & Synchronizovaná skrze sdílený $R_t$ \\
+Cíl & Průnik množin & Specifická sekvence hash hitů \\
+Pozice útočníka & Třetí strana ve stejné hře & Pozorovatel bez koherentního stavu \\
+\bottomrule
+\end{tabular}
+\caption{Statický birthday model versus dynamický Grata Cascade systém. Dynamické mechanismy statický základ posilují, ale neporušují.}
+\label{tab:static-vs-dynamic}
+\end{table}
+
+Statická asymetrie $R \approx n/k$ z Věty~\ref{thm:asymmetry} poskytuje \emph{dolní mez} pro výhodu legitimních stran nad útočníkem v Grata Cascade. Dynamické mechanismy tuto mez posilují; kvantitativní formalizace posílení zůstává Otevřeným problémem~\ref{prob:dynamic-formal}.
+
+\paragraph{Související linie.} Mimo TPM a Merkleho puzzle čerpá Grata Cascade z širší tradice odvozování klíčů ze sdílené strukturální informace. Fuzzy commitment schémata~\cite{JW1999} a fuzzy extraktory~\cite{Dodis2004} odvozují klíče ze šumových sdílených pozorování společného kvanta. Grata Cascade sdílí princip odvozování klíčů z \emph{distribuce}, ale distribuce je zde konstruována interaktivně během protokolu, ne odvozena z předchozího sdíleného pozorování. Framework průběžné domluvy klíče (CKA) byl formalizován Alwenem, Corettim a Dodisem~\cite{ACD19}, postkvantová CKA založená na KEM byla publikována v projektu Triple Ratchet (SPQR)~\cite{SPQR2025}. Grata Cascade se liší od SPQR v kryptografickém předpokladu (pouze preimage resistance, žádné mříže) a v charakteru stavu (strukturovaná pravděpodobnostní distribuce namísto KEM parametrů).
+
+\section{Grata Cascade: Konkrétní implementace}\label{sec:concrete}
+
+Tato sekce specifikuje protokol Grata Cascade, jeho parametry, strukturu kola a parametrickou rodinu. Čtyři designová rozhodnutí ze Sekce~\ref{sec:transformation} (adresování přes hash, drift přes náhodný vektor, aktualizace vektorů s TPM-inspirovanou adaptací, AES derivace klíče) jsou zde realizována v konkrétní formě.
+
+\subsection{Parametry}
+
+Tabulka~\ref{tab:params} uvádí parametry protokolu. Grata Cascade tvoří parametrickou rodinu: konkrétní hodnoty volí uživatel pro dosažení požadovaných vlastností. \emph{Referenční konfigurace} (Tabulka~\ref{tab:params}, prostřední sloupec) se používá pro empirickou evaluaci v Sekci~\ref{sec:empirical}. Tučné hodnoty jsou empiricky kalibrovány systematickými sweepy dokumentovanými v Sekci~\ref{sec:empirical}.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+Symbol & Popis & Ref. hodnota & Operační rozsah \\
+\midrule
+$L$ & délka vektoru (bajty) & 32 & 4--64 \\
+$N$ & počet vektorů na stranu & 4096 & 64--65536 \\
+$h_{AB}$ & délka hash A$\to$B (bajty) & 5 & 1--16 \\
+$h_{BA}$ & délka hash B$\to$A (bajty) & 2 & 1--8 \\
+$h_P$ & délka password hash (bajty) & \textbf{8} & 1--16 \\
+$M$ & počet password kandidátů & \textbf{8} & 1--64 \\
+$s$ & rozsah seed perturbace ($\pm s$) & \textbf{4} & $[1, 30]$ (validováno) \\
+$p_\text{upd}$ & pravděpodobnost aktualizace & \textbf{0{,}75} & $[0{,}6, 1{,}0]$ \\
+$\tau$ & práh terminace ($\log_2$) & $-512$ & $-1024$ až $-256$ \\
+$\theta_{\text{cut}}$ & práh odmítnutí poolu ($\log_2$) & $-8$ & $-256$ až $0$ \\
+$\theta_{\text{cand}}$ & práh odmítnutí kandidátů ($\log_2$) & \textbf{$-8$} (vypnut) & $-256$ až $0$ \\
+$\text{MaxIter}$ & strop iterací na běh & \textbf{500} & $1$--$10^5$ \\
+\bottomrule
+\end{tabular}
+\caption{Parametry Grata Cascade reference v2 (po 2026-05-02). Tučné hodnoty jsou kalibrovány pod baseline v2. Rozsah $p_\text{upd} \in [0{,}6, 1{,}0]$ je vymáhaný při načítání konfigurace: pod $0{,}6$ protokol nekonverguje; nad $0{,}95$ kolaps Stat distribuce vyžaduje uvolnění $\theta_{\text{cand}}$. Rozsah $s \in [1, 30]$ je empiricky validován pro invariantu konvergence (Sekce~\ref{sec:empirical}). Práh $\theta_{\text{cand}} = -8$ v referenci je roven $\theta_{\text{cut}}$ a tedy filtr vypíná (konzistenční omezení je $\theta_{\text{cut}} \geq \theta_{\text{cand}}$); zapnutí filtru (např. $\theta_{\text{cand}} = -95$, F4 v1 kalibrované optimum) je konfigurovatelná Tier-3 obrana (Sekce~\ref{sec:cand-threshold}).}
+\label{tab:params}
+\end{table}
+
+\subsection{Notace}
+
+\begin{itemize}[leftmargin=*]
+\item $\mathcal{V}_A, \mathcal{V}_B$: privátní množiny vektorů $v \in \{0,\ldots,255\}^L$ na stranách A a B.
+\item $H(\cdot)$: SHA-256 hashová funkce.
+\item $H[a\mathord{:}b](\cdot)$: bajty $a$ až $b-1$ z výstupu hashe.
+\item $R$: veřejný náhodný vektor vyměňovaný v každém kole.
+\item $\mathrm{AES}_{K}(m)$: AES-256-CBC šifrování $m$ pod klíčem $K$, s \texttt{PaddingMode.None}.
+\item $\mathcal{S}_A, \mathcal{S}_B$: statistické tabulky udržované každou stranou (Sekce~\ref{sec:drift}).
+\end{itemize}
+
+\subsection{Inicializace a struktura kola}
+
+Obě strany nezávisle generují $N$ rovnoměrně náhodných vektorů délky $L$ pomocí kryptograficky bezpečného PRNG (\texttt{System.Security.Cryptography.RandomNumberGenerator}); statistické tabulky jsou inicializovány na rovnoměrné.
+
+Kolo $t$ probíhá následovně:
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Přenos hashů A$\to$B.} A vypočítá a pošle hashové prefixy $\{H[0{:}h_{AB}](v) : v \in \mathcal{V}_A\}$.
+
+\item \textbf{B hledá kolize a vybírá kandidáty.} B najde vektory v $\mathcal{V}_B$, jejichž hashové prefixy odpovídají přijatým, seřadí tyto kolizní kandidáty podle $\mathcal{S}_B$-pravděpodobnosti vzestupně (nejnižší pravděpodobnost první --- inverse-probability selekce podle Sekce~\ref{sec:drift}), filtruje prahem $\theta_{\text{cand}}$ a vybere prvních $M$ kandidátů. Z těchto, lexikograficky seřazených, B spočítá per-round AES klíč $K_t = H(v_{\pi(1)} \Vert \cdots \Vert v_{\pi(M)})$, vygeneruje nový seed $\sigma_t$ a přenáší k A: veřejný náhodný vektor $R$, AES šifrovaný text $\mathrm{AES}_{K_t}(\sigma_t)$, a hashové prefixy B$\to$A $\{H[h_{AB}{:}h_{AB}+h_{BA}](v) : v \in \text{kandidáti}\}$.
+
+\item \textbf{A enumeruje kandidáty a dešifruje.} A enumeruje kombinace vektorů z $\mathcal{V}_A$ matchujících přijaté B$\to$A hashové prefixy. Pro každou kandidátní kombinaci A rekonstruuje kandidátní $K_t$, pokusí se o AES dešifrování a přijme výsledek jako kandidátní seed (absence paddingu znamená, že dešifrování vždy "uspěje" syntakticky; sémantická validace přichází později).
+
+\item \textbf{Aktualizace Stat a refresh poolu.} Obě strany aktualizují $\mathcal{S}$ pomocí $R$ (deterministicky z veřejného náhodného vektoru). Každý vektor v poolu je nezávisle aktualizován s pravděpodobností $p_\text{upd}$. Vektorový pool je pak doplněn z kandidátních/vlastních seedů s $\pm s$ perturbací, filtrováno $\theta_{\text{cut}}$ pro odmítnutí nadmíru typických vektorů.
+
+\item \textbf{Terminace.} B udržuje akumulovaný seznam password vektorů $\mathcal{P}$. Když kumulativní log-pravděpodobnost $\sum_{v \in \mathcal{P}} \log_2 \Pr_{\mathcal{S}_B}(v) < \tau$, B posílá Final zprávu obsahující $\{H[h_{AB}+h_{BA}{:}h_{AB}+h_{BA}+h_P](v) : v \in \mathcal{P}\}$. A enumeruje odpovídající password vektory ze svých kandidátních seedů; finální sdílený klíč je $K^* = H(v_{\pi(1)} \Vert \cdots \Vert v_{\pi(|\mathcal{P}|)})$.
+\end{enumerate}
+
+\subsection{Model útočníka a scope}
+
+Uvažujeme \emph{pasivního útočníka} $\mathcal{E}$ s přístupem pro čtení ke kompletní veřejné transkripci jednoho sezení: všechny $R_t$, všechny posloupnosti hashů A$\to$B, všechny zprávy B$\to$A včetně AES šifer, všechny Final zprávy. $\mathcal{E}$ má probabilistické polynomiální (PPT) výpočetní zdroje a snaží se spočítat finální klíč $K^*$ nebo odlišit $K^*$ od rovnoměrně náhodného ve standardní key-indistinguishability hře pro jednorázovou KE primitivu (analogická CKA distinguishing hře z~\cite{ACD19} omezené na jeden klíč).
+
+\textbf{Scope limitation: aktivní útočník.} Aktivní síťový útočník schopný modifikovat zprávy v transitu je mimo scope tohoto protokolu. Grata Cascade je navržena pro nasazení uvnitř autentizovaného transportu (TLS, Noise framework), kde je integrita zpráv a autentizace protistrany zajištěna transportní vrstvou. Aktivní útočník schopný obejít transportní autentizaci má striktně větší přístup, než by mohl využít konkrétní protokol-level útok. Volitelné defense-in-depth mechanismy pro nasazení postrádající autentizovaný transport jsou načrtnuty v Dodatku~\ref{app:optional-defenses}.
+
+\subsection{Analytické vztahy}
+
+Čtyři kvantitativní vztahy charakterizují parametrickou rodinu:
+
+\paragraph{Preimage bariéra.} Bitová délka kumulativního hashového omezení na finální password vektor je $\lambda_\text{preimage} = 8 \cdot (h_{AB} + h_{BA} + h_P)$. Za předpokladu SHA-256 jako náhodného orákula (Věta~\ref{thm:preimage}) nalezení platného preimage vyžaduje $2^{\lambda_\text{preimage}}$ vyhodnocení hashe. Pro referenci v2: $\lambda_\text{preimage} = 8 \cdot (5 + 2 + 8) = 120$ bitů.
+
+\paragraph{Velikost nerozlišitelné množiny.} Počet vektorů $u \in \{0,\ldots,255\}^L$ splňujících plný preimage filtr pro daný password vektor $v$ je $\approx 2^{8L - \lambda_\text{preimage}}$. Pro referenci v2: $2^{256 - 120} = 2^{136}$ vektorů. Toto není mez na útočnickou práci --- jediný splňující vektor lze nalézt v $2^{\lambda_\text{preimage}}$ hashích. Je to místo toho \emph{designovaný práh útočnické nejednoznačnosti}: libovolný útočník, který obejde preimage filtr, získá nejvýše $1$ správný kandidát z $2^{136}$ nerozlišitelných přeživších. V kombinaci s AES-CBC NoPadding absencí validačního orákula (Sekce~\ref{sec:aes}) je tato velikost množiny obranou proti zaplavení.
+
+\paragraph{Bariéra hustoty poolu.} Relativní hustota pool vektorů v near-seed prostoru je $\rho_\text{pool} = N / (2s+1)^L$. Pro referenci: $\rho = 2^{12}/7^{32} \approx 2^{-78}$. Asymetrie: $L$ má exponenciální vliv, zatímco $N$ lineární.
+
+\paragraph{Zásadní asymetrie na profil.} Z Věty~\ref{thm:asymmetry} je statický poměr asymetrie $R \approx |U|/k$, kde $|U| = 2^{8L}$ je univerzum a $k = N$ je velikost množiny na stranu. To kvantifikuje strukturální výhodu legitimních stran nad útočníky před jakýmkoli dynamickým posílením (viz sloupec $\log_2 R$ v Tabulce~\ref{tab:profiles}).
+
+\paragraph{Bandwidth na kolo.} Přibližná velikost transkripce jednoho kola je $B_\text{round} \approx L + N \cdot h_{AB} + M \cdot h_{BA} + L$ bajtů, dominována hashi A$\to$B. Pro referenci: $\approx 20{,}5$ KB.
+
+\paragraph{Paměťová stopa.} Velikost stavu na stranu je $S_\text{state} = N \cdot L + 256 \cdot L$ bajtů. Pro referenci: $\approx 136$ KB.
+
+\subsection{Tři designová rationale pro hashe}\label{sec:rationale}
+
+Tři délky hashových prefixů $h_{AB}$, $h_{BA}$, $h_P$ nejsou pouhé kalibrační knoflíky se sdílenou ,,bezpečnostní`` sémantikou. Každý slouží odlišnému designovému rationale a jejich optimální hodnoty jsou odvozeny z kvalitativně odlišných omezení.
+
+\paragraph{$h_{AB}$: Práh správnosti proti falešným kolizím.} Strana B identifikuje kandidátní password vektory hledáním shod mezi svými hashovými prefixy a těmi přijatými od A. Pokud je $h_{AB}$ příliš krátký, náhodné vektory v $\mathcal{V}_B$ budou spontánně odpovídat hashům A (aniž by odpovídaly skutečnému průniku), což způsobí, že B staví seedy a passwordy na falešných premisách --- \emph{tiché selhání protokolu} bez možnosti zotavení. Očekávaný počet falešných kolizí na kolo je
+\[
+\mathbb{E}[\text{falešné kolize}/\text{kolo}] = \frac{N^2}{2^{8 h_{AB}}}.
+\]
+Pro referenci ($N = 4096$, $h_{AB} = 5$): $2^{24}/2^{40} = 2^{-16} \approx 1{,}5 \cdot 10^{-5}$ na kolo. Kalibrační pravidlo je
+\[
+h_{AB} \geq \left\lceil \frac{2 \log_2 N + 8}{8} \right\rceil,
+\]
+s $+8$ bit marží dávající přibližně $10^{-4}$ per-round míru falešných kolizí --- přijatelnou pro produkci při škále protokolu ($\sim 50$ kol na konvergenci).
+
+$h_{AB}$ je tedy \emph{parametr správnosti protokolu}, nikoli parametr útočnické bezpečnosti: útočníci nemohou využít falešné B-kolize pro vlastní útoky (postrádají privátní přístup k $\mathcal{V}_B$), ale protokolová exekuce B bez tohoto prahu selhává. Kratší $h_{AB}$ získává bandwidth za cenu tichých selhání správnosti; kalibračním cílem je minimum dávající přijatelnou míru selhání.
+
+\paragraph{$h_{BA}$: Obrana proti zaplavení designovanou nerozlišitelností.} Hash B$\to$A $h_{BA}$ funguje inverzně oproti $h_{AB}$: kratší je lepší pro útočnickou odolnost. Každý bit $h_{BA}$ přidaný k per-round filtru snižuje velikost nerozlišitelné množiny faktorem $2$, smršťuje obranu proti zaplavení. Designovým cílem je udržet $h_{BA}$ minimální a přitom přispět k celkovému preimage rozpočtu. Referenční $h_{BA} = 2$ bajty přispívá $16$ bity k $\lambda_\text{preimage}$; jakákoli kratší hodnota by klesla pod minimální informační požadavek B$\to$A kanálu; jakákoli delší by snížila obranu proti zaplavení pod strukturální potřebu.
+
+Kontrast s rationale $h_{AB}$ je ostrý: $h_{AB}$ je \emph{práh správnosti} (zvyšovat dokud falešné kolize nejsou zanedbatelné), zatímco $h_{BA}$ je \emph{strop obrany proti zaplavení} (udržet tak nízký, jak rozpočet dovolí). Jde o opačné optimalizační směry.
+
+\paragraph{$h_P$: Práh cross-round synchronizace.} Hash ze zprávy Final $h_P$ má odlišnou roli: je to \emph{jediný globální identifikátor} pro množinu passwordů $\mathcal{P}$ akumulovanou přes všechna kola session. Na konci protokolu A přijímá $|\mathcal{P}|$ Final hashů a musí identifikovat, které z jejích mnoha kandidátních vektorů (extrahovaných z AES dešifrování přes $T \approx 50$--$100$ kol) odpovídají kterým password slotům. Prohledávaný prostor na straně A je akumulovaný kandidátní pool $C_\text{total} \approx T \cdot M \approx 800$ vektorů. Pro každý Final hash by spontánní shoda vedla k tichému key mismatch:
+\[
+\mathbb{E}[\text{tichý mismatch}/\text{session}] \approx |\mathcal{P}| \cdot C_\text{total} \cdot 2^{-8 h_P}.
+\]
+Pro $h_P = 8$ bajtů a $|\mathcal{P}| = M = 8$, $C_\text{total} \approx T \cdot M \approx 400$ (s mediánem iter $T \approx 49$ pro referenci v2): $8 \cdot 400 \cdot 2^{-64} \approx 1{,}7 \cdot 10^{-16}$. To je hluboko pod cílem produkční škály ($\sim 10^{-9}$) pro tiché key kolize uváděný Signalem a WhatsAppem. Empirická reziduální míra key-mismatch pozorovaná na $5 \times 10^4$ bězích je $\sim 8 \cdot 10^{-5}$, konzistentní s $h_{AB}$-kolizemi (40-bit) jako dominantním zdrojem divergence po posílení $h_P$.
+
+Na rozdíl od $h_{AB}$ (chrání per-round správnost) a $h_{BA}$ (chrání obranu proti zaplavení) $h_P$ chrání \emph{cross-round protokolovou synchronizaci}. Je to kumulativní parametr správnosti, kalibrovaný proti akumulovanému stavu celé session.
+
+\paragraph{Shrnutí.} Tři délky hashových prefixů slouží ortogonálním účelům: $h_{AB}$ vynucuje per-round správnost (škáluje s $N$), $h_{BA}$ vynucuje obranu proti zaplavení (udržováno minimální pro dané $\lambda_\text{preimage}$), $h_P$ vynucuje cross-round správnost (škáluje s délkou session $T$ a akumulací kandidátů). Všechny tři přispívají aditivně k $\lambda_\text{preimage}$, ale jejich individuální kalibrační drivery jsou kvalitativně odlišné. Hodnoty Tabulky~\ref{tab:profiles} reflektují toto per-hash rationale.
+
+\subsection{Parametrické profily}\label{sec:profiles}
+
+Tabulka~\ref{tab:profiles} uvádí tři produkční parametrické profily, re-kalibrované podle tří designových rationale zavedených v Sekci~\ref{sec:rationale}. Tři dodatečné výzkumné parametrické rodiny (IoT, PQ128, Break-Demo) jsou formulovány jako otevřené problémy~\ref{prob:iot}, \ref{prob:pq128} a \ref{prob:breakdemo}. Sloupec $\log_2 R$ kvantifikuje statickou asymetrii z birthday bound na profil. Sloupec s velikostí nerozlišitelné množiny kvantifikuje velikost kandidátní množiny nad preimage bariérou (Sekce~\ref{sec:aes}).
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrrrrrl}
+\toprule
+Profil & $L$ & $N$ & $h_{AB}$ & $h_{BA}$ & $h_P$ & $M$ & $\lambda_\text{preimage}$ & Nerozliš. množ. & $\log_2 R$ \\
+\midrule
+Reference v2 & 32 & 4096 & 5 & 2 & 8 & 8 & 120 & $2^{136}$ & 244 \\
+Mobile (cíl) & 32 & 1024 & 5 & 2 & 8 & 4 & 120 & $2^{136}$ & 246 \\
+HighSec (cíl) & 32 & 8192 & 6 & 3 & 8 & 8 & 136 & $2^{120}$ & 243 \\
+\bottomrule
+\end{tabular}
+\caption{Reference v2 baseline plus dva produkční profilové cíle, s per-hash designovým rationale: $h_{AB}$ kalibrováno jako práh správnosti pro očekávanou míru falešných kolizí $\sim 10^{-5}$ na kolo, $h_{BA}$ minimální pro obranu proti zaplavení a příspěvek k $\lambda_\text{preimage}$, $h_P$ kalibrováno pro cross-round spolehlivost synchronizace na produkční škále (Reference v2 tichý mismatch $\sim 10^{-16}$ na session, hluboko pod cílem $10^{-9}$). Všechny profily používají $s = 4$, $p_\text{upd} = 0{,}75$, $\theta_{\text{cut}} = -8$, $\theta_{\text{cand}}$ defaultně vypnut. Stav: Reference v2 plně empiricky validována; Mobile a HighSec jsou profilové cíle čekající na empirickou re-derivaci.}
+\label{tab:profiles}
+\end{table}
+
+Konfigurace Reference v2 je primárním předmětem empirické evaluace v Sekci~\ref{sec:empirical}. Mobile je určen pro bandwidth-omezená nasazení se sníženým $N$ a $M$, ale identickou preimage bariérou. HighSec směňuje vyšší bandwidth za silnější preimage bariéru ($\lambda_\text{preimage} = 136$ bitů). Hodnoty $\log_2 R$ ilustrují statickou birthday-bound asymetrii napříč produkční rodinou: všechny ve stejném řádu díky sdílené velikosti univerza $L = 32$.
+
+\section{Statistický drift jako obrana proti útočníkovi}\label{sec:drift}
+
+Tato sekce zkoumá mechanismus statistického driftu --- druhé designové rozhodnutí ze Sekce~\ref{sec:transformation} --- jako konkrétní obranu proti pasivním útočníkům. Drift adresuje to, co identifikujeme jako geometrickou slabinu historické Tree Parity Machine: její synchronizační fáze vyzrazuje informaci o gradientu, což útočníkovi umožňuje rekonstruovat privátní stav. Mechanismus driftu Grata Cascade záměrně vyhýbá této cestě úniku, zatímco zachovává strukturální náhled, že iterativní veřejná komunikace může řídit synchronizaci.
+
+\subsection{Statistická distribuce $\mathcal{S}$}\label{sec:stat}
+
+Každá strana udržuje tabulku $\mathcal{S}$ s, pro každou pozici $i \in \{1, \ldots, L\}$, pravděpodobnostním vektorem $(p_i(0), \ldots, p_i(255))$. Zpočátku $p_i(x) = 1/256$ pro všechna $x$ (rovnoměrně). Po přijetí veřejného náhodného vektoru $R$ aktualizace posune každý sloupec o $R_i - 128$ (s oříznutím na hranicích bajtu) a kombinuje ve váženém součtu:
+\[
+p_i'(x) = p_\text{upd} \cdot p_i(x) + (1 - p_\text{upd}) \cdot \tilde{p}_i(x),
+\]
+kde $\tilde{p}_i$ je posunutá distribuce. Pravděpodobnost vektoru pod $\mathcal{S}$ je pak $\Pr_\mathcal{S}(v) = \prod_{i=1}^{L} p_i(v_i)$.
+
+\begin{observation}\label{obs:public-stat}
+$\mathcal{S}$ je deterministickou funkcí veřejné posloupnosti $(R_1, R_2, \ldots, R_t)$ a (veřejně známých) počátečních podmínek. Útočník pozorující transkripci může $\mathcal{S}$ přesně rekonstruovat. Co útočník \emph{neví}, je, \emph{které konkrétní vektory} A a B v daném kole skutečně aktualizovaly (protože každý vektor je aktualizován pouze s pravděpodobností $p_\text{upd} < 1$). To vytváří asymetrii mezi identickou distribuční znalostí (sdílenou mezi všemi stranami) a rozcházející se znalostí konkrétních vektorových trajektorií (privátních pro každou stranu).
+\end{observation}
+
+\subsection{Výběr kandidátů podle inverzní pravděpodobnosti}\label{sec:selection}
+
+Při výběru password kandidátů z kolizní množiny B řadí vzestupně podle $\mathcal{S}_B$-pravděpodobnosti a vybírá prvních $M$ --- kandidáty s \emph{nejnižší} pravděpodobností pod sdílenou distribucí. Intuice: vektory s vysokou pravděpodobností leží v "typické" oblasti distribuce a mohly by být útočníkem generovány přímým samplingem z rekonstruované $\mathcal{S}$; vektory s nízkou pravděpodobností (tail) vyžadují exponenciálně mnoho pokusů.
+
+Práh $\theta_\text{cand}$ dále omezuje kandidáty: vektory s $\log_2 \Pr_\mathcal{S}(v) > \theta_\text{cand}$ jsou z výběru vyloučeny bez ohledu na jejich status kolize hashe. Tento filtr je kandidátní obranou proti scénářům koncentrace Stat diskutovaným v Sekci~\ref{sec:cand-threshold}.
+
+\subsection{Pravděpodobnost aktualizace: kalibrovaný operační rozsah}\label{sec:p-upd}
+
+Parametr $p_\text{upd}$ řídí rychlost, jakou se $\mathcal{S}$ přes kola koncentruje. Empirické sweepy na referenční konfiguraci (Sekce~\ref{sec:empirical-pupd}) odhalují, že $p_\text{upd}$ má omezený operační rozsah $[0{,}6, 0{,}95]$:
+
+\begin{itemize}[leftmargin=*]
+\item $p_\text{upd} \leq 0{,}5$: drift se tvoří příliš pomalu. Po typických horizontech konvergence ($\sim 50$--$100$ kol) zůstává $\mathcal{S}$ příliš blízko rovnoměrné distribuci pro smysluplnou tail diferenciaci výběru; protokol nekonverguje.
+\item $p_\text{upd} = 0{,}75$ (reference): empiricky optimální sweet spot. Konvergence v $\approx 50$ kolech (medián), $\mathcal{S}$ zachovává téměř rovnoměrnou entropii ($\approx 7{,}55$ bitů/bajt), log-pravděpodobnost kandidátů $\approx -160$.
+\item $p_\text{upd} \geq 0{,}95$: $\mathcal{S}$ kolabuje k delta distribuci (max per-byte pravděpodobnost $\to 1$); password kandidáti se koncentrují v typické oblasti, stávají se zranitelnými vůči přímé statistické generaci útočníky s rekonstruovanou $\mathcal{S}$.
+\end{itemize}
+
+Referenční hodnota $p_\text{upd} = 0{,}75$ tedy není libovolná, ale je výsledkem empirické kalibrace. Hodnoty mimo $[0{,}6, 0{,}95]$ jsou odmítnuty při načítání konfigurace s explicitní chybou; pokus o instanciaci protokolu s $p_\text{upd} = 1{,}0$ nepadne tiše.
+
+Tento operační rozsah je designovým omezením \emph{relevantním pro bezpečnost}: při vysokém $p_\text{upd}$ by Stat koncentrace umožnila útočníkovi redukovat efektivní search space zaměřením na oblasti s vysokou pravděpodobností rekonstruovatelné $\mathcal{S}$. Omezení rozsahu zachovává dynamické posílení zásadní asymetrie.
+
+\subsection{Práh odmítnutí kandidátů jako konfigurovatelná Tier-3 obrana}\label{sec:cand-threshold}
+
+Práh $\theta_\text{cand}$ filtruje password kandidáty B: kvalifikují se jen vektory s $\log_2 \Pr_\mathcal{S}(v) \leq \theta_\text{cand}$. Default reference v2 je $\theta_\text{cand} = \theta_\text{cut} = -8$, což (pod konzistenčním omezením $\theta_\text{cut} \geq \theta_\text{cand}$) umisťuje práh roven nejvolnějšímu možnému filtru a tedy \emph{vypíná} filtraci kandidátů v referenci. Reference v2 se tak spoléhá na drift Stat, který strukturálně umisťuje kandidáty do tailu bez zásahu filtru --- empirická validace (Sekce~\ref{sec:empirical}) ukazuje plnou konvergenci a plnou útočnickou rezistenci s vypnutým filtrem.
+
+Filtr je vystaven jako \emph{konfigurovatelná Tier-3 strukturální obrana}: nasazení pod zvýšenými hrozbami (nebo non-default parametrickými režimy způsobujícími Stat koncentraci) mohou zpřísnit $\theta_\text{cand}$ pro vynucení striktní tail-selekce. Empiricky kalibrované optimum na referenci v1 bylo $\theta_\text{cand} = -95$, kde přibližně $10\%$ kol mělo po filtraci méně než $M$ přežívajících kandidátů a byla přeskočena, mírně zvyšujíc počet iterací konvergence bez jejího prolomení. Dřívější ablace~\cite{F4Calibration} reportovala, že vypnutí filtru při $p_\text{upd} = 1{,}0$ způsobilo růst log-pravděpodobnosti kandidátů z $-165$ (filtrováno) na $-53$ (nefiltrováno, kolabovaný Stat). Tier-3 nasazení pod takovými režimy by měla filtr znovu zapnout; reference v2 demonstruje, že pod kalibrovaným $p_\text{upd} = 0{,}75$ filtr není vyžadován.
+
+Pro non-reference parametrické profily $\theta_\text{cand}$ (pokud zapnut) vyžaduje nezávislou kalibraci: přirozená distribuce log-pravděpodobností kandidátů škáluje lineárně s $L$ (přibližně $-5$ bitů na bajt; např. $\sim -75$ pro $L = 16$, $\sim -165$ pro $L = 32$, $\sim -322$ pro $L = 64$).
+
+\subsection{Práh odmítnutí poolu}
+
+Práh $\theta_\text{cut}$ odmítá pool vektory s $\log_2 \Pr_\mathcal{S}(v) > \theta_\text{cut}$ během regenerace vektorů. Na referenční konfiguraci je tento práh strukturálně neaktivní: rovnoměrně náhodně generované vektory mají $\log_2 \Pr_\mathcal{S} \approx -256$, hluboko pod jakýmkoli realistickým prahem. Empirická validace přes plný rozsah $p_\text{upd}$ potvrzuje nulové odmítnutí na referenci (Sekce~\ref{sec:empirical-pupd}).
+
+Práh slouží jako \emph{safety contract pro parametrickou rodinu}: konfigurace s menší dimenzí (např. $L = 16$) produkují pool vektory s vyšší pravděpodobností pod Stat (typicky $\log_2 \Pr \in [-120, -80]$), kde by se $\theta_\text{cut}$ stal aktivním. Default $\theta_\text{cut} = -8$ zůstává přes profily jako neaktivní na referenci, stává se strukturálně aktivovaným pouze tam, kde to parametrické škálování vyžaduje.
+
+\subsection{Proč drift adresuje slabinu TPM}\label{sec:tpm-weakness}
+
+Tree Parity Machine~\cite{KKK2002} dosahuje odvození sdíleného klíče přes dvě neuronové sítě provádějící bidirectional learning. Geometrický útok Klimova, Mityagina a Shamira~\cite{KMS2003} využívá synchronizační fázi: jak sítě upravují své interní váhy, aby odpovídaly výstupům, informace o gradientu uniká přes veřejnou posloupnost výstupů, což útočníkovi umožňuje rekonstruovat váhy s pravděpodobností exponenciálně rostoucí s počtem synchronizačních kol.
+
+Statistický drift Grata Cascade se strukturálně liší:
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{Žádná bidirectional gradientní informace.} Aktualizační pravidlo je unidirectional: každá strana aplikuje stejnou deterministickou aktualizaci $p_i' = p_\text{upd} \cdot p_i + (1-p_\text{upd}) \cdot \tilde{p}_i$ na základě veřejného $R$. Nejsou zde žádná "learning pravidla" upravující stav na základě nesouladu výstupu.
+\item \textbf{Deterministika veřejného vstupu plus náhodnost privátní trajektorie.} Distribuce $\mathcal{S}$ je veřejně rekonstruovatelná (Pozorování~\ref{obs:public-stat}), ale \emph{které vektory} byly aktualizované zůstává privátní. TPM slabina byla, že synchronizační výstupy vyzrazovaly, které váhy byly synchronizované; zde vyzrazená informace ($\mathcal{S}$) explicitně \emph{nezahrnuje} informaci o vektorové trajektorii.
+\item \textbf{Empirická validace.} Sekce~\ref{sec:empirical-attackers} hlásí nulovou diskriminační sílu pro B.4 AES-Oracle útočníka přes $2{,}2 \cdot 10^{10}$ dotazů, s Cohen's $d = 0{,}002$. Sekce~\ref{sec:empirical-seed} rozšiřuje toto na zhuštěné poolové podmínky ($s = 1$ dávající $\rho \approx 2^{-38}$, $39$ bitů hustší než reference) bez detekovatelného signálu. Cesta geometrické rekonstrukce, která porazila TPM, nemá empirický protějšek v Grata Cascade.
+\end{itemize}
+
+Toto nepředstavuje formální důkaz odolnosti vůči TPM-stylovým útokům; představuje \emph{strukturální argument}, že cesta úniku využívaná v TPM zde chybí, podpořený rozsáhlou empirickou evaluací. Formalizace odolnosti vůči TPM-stylovým útokům zůstává v scope Otevřeného problému~\ref{prob:dynamic-formal}.
+
+\section{AES-CBC NoPadding jako obrana proti zaplavení}\label{sec:aes}
+
+Tato sekce zkoumá roli AES derivace klíče --- čtvrté designové rozhodnutí ze Sekce~\ref{sec:transformation} --- jako obrany proti útočníkům s libovolnými výpočetními rozpočty. Strukturální argument je: i útočník schopný generovat astronomicky velké pooly vektorů nemůže převést hrubou výpočetní sílu na kryptografickou informaci, aniž by porazil AES derivaci klíče, která sama redukuje na kumulativní preimage bariéru ze Sekce~\ref{sec:concrete}.
+
+\subsection{AES derivace klíče z password vektorů}
+
+Per-round AES klíč je odvozen jako
+\[
+K_t = H(v_{\pi(1)} \Vert v_{\pi(2)} \Vert \cdots \Vert v_{\pi(M)}),
+\]
+kde $H$ je SHA-256, $v_{\pi(i)}$ jsou lexikograficky seřazení password kandidáti (Sekce~\ref{sec:concrete}) a $M$ je počet password vektorů na kolo. Obě strany odvodí stejné $K_t$ právě tehdy, když se shodnou na stejné kandidátní množině --- podmínka korektnosti pro konvergenci protokolu.
+
+Lexikografické řazení je pro synchronizaci zásadní: bez kanonického uspořádání by strany mohly vybrat stejnou množinu v různém pořadí a odvodit různé klíče.
+
+\subsection{PaddingMode.None: Absence validačního orákula}
+
+AES se používá v režimu CBC s \texttt{PaddingMode.None}. To je záměrné kryptografické designové rozhodnutí: bez paddingu produkuje dešifrování se špatným klíčem $L$ bajtů pseudonáhodného výstupu, který je strukturálně nerozlišitelný od výstupu správného dešifrování. Není zde žádná syntaktická kontrola (např. validace paddingu), kterou by útočník mohl zneužít jako validační orákulum.
+
+Pro útočníka to znamená: daný kandidátní $K_t'$ (sestavený z odhadnutých password vektorů), AES dešifrování zachyceného šifrovaného textu dává nějakou 32-bajtovou posloupnost. Bez externí kontroly (např. následné shody hashů v dalším kole) útočník nemůže odlišit správný odhad od nesprávného. Jedinou možností útočníka je verifikovat kandidátní seedy proti následným round transkriptům --- což vyžaduje, aby útočník také vlastnil správné password vektory.
+
+\subsection{Útočník s velkým poolem: nerozlišitelné kandidátní seedy}\label{sec:flooding}
+
+Uvažujme útočníka $\mathcal{E}$ s velikostí poolu vektorů $P$, pokoušejícího se projít kaskádou hashových filtrů protokolu. Očekávaný počet stage-b přeživších (pool vektorů procházejících jak A$\to$B, tak B$\to$A filtrovými prefixy) je:
+\[
+E[\text{stage-b}] = P \cdot N \cdot M / 2^{8(h_{AB} + h_{BA})}.
+\]
+Pro referenční konfiguraci v2 ($N = 4096$, $M = 8$, $h_{AB} + h_{BA} = 7$ bajtů $= 56$ bitů):
+
+\begin{itemize}[leftmargin=*]
+\item $P = 10^{12}$: očekávaný $\approx 1$ stage-b přeživší.
+\item $P = 10^{15}$: očekávaný $\approx 2^{10} = 1024$ stage-b přeživších.
+\item $P = 10^{18}$: očekávaný $\approx 2^{20} = 10^{6}$ stage-b přeživších.
+\end{itemize}
+
+Pro každého stage-b přeživšího se útočník pokusí o AES dešifrování, čímž získá kandidátní seed $\sigma'$. S \texttt{PaddingMode.None} a nesprávným $K_t'$ je $\sigma'$ statisticky nerozlišitelný od náhodných bajtů. Útočník tedy získá počet kandidátních seedů rovný počtu stage-b přeživších, všechny nerozlišitelné.
+
+\paragraph{Pozorování zaplavení.} Zvyšování $P$ nezvyšuje útočníkovu \emph{informaci}; zvyšuje pouze \emph{šum}. Každý další stage-b přeživší přidává další kandidátní seed do nerozlišitelného poolu, ale neposkytuje žádný signál označující, který (pokud nějaký) seed je správný. Škálování poolu útočníkem přináší lineární růst počtu kandidátů, exponenciální růst výpočetní ceny a nulový růst akcionovatelné informace.
+
+\subsection{Proč je krátký $h_{BA}$ designová vlastnost}
+
+Délka hashe B$\to$A $h_{BA} = 2$ bajty je záměrně krátká. To je kontraintuitivní --- naivně, delší hashe se zdají poskytovat přísnější filtry a tedy silnější bezpečnost. Opak je zde pravdou: delší $h_{BA}$ by byl škodlivý.
+
+\textbf{Kontrastní argument.} Předpokládejme, že $h_{BA}$ bylo zvětšeno na $8$ bajtů (odpovídající $h_{AB}$). Pak pro stejné $P = 10^{15}$ by očekávaní stage-b přeživší byli $P \cdot N \cdot M / 2^{8(5+8)} = 10^{15} \cdot 4096 \cdot 16 / 2^{104} \approx 10^{-15}$ --- efektivně nula. Útočníkův filtr by redukoval kandidáty na jediný specifický vektor, který by pak mohl verifikovat přes následná kola. Tento jediný verifikovatelný kandidát poskytuje analyzovatelný cíl.
+
+Krátký $h_{BA}$ záměrně udržuje počet stage-b přeživších nad $1$ pro útočnické velikosti poolu, zajišťuje \emph{zaplavení} spíše než \emph{specifickou identifikaci}. Kumulativní preimage bariéra $120$ bitů (reference v2: $\lambda_\text{preimage} = 8 \cdot (5 + 2 + 8)$) zůstává intaktní, ale per-stage rozklad záměrně koncentruje sílu filtru do veřejných A$\to$B hashů ($h_{AB} = 5$) a Final hashů ($h_P = 8$), zatímco per-round B$\to$A hash zůstává záměrně permisivní.
+
+Toto je argument \emph{bezpečnost-skrze-zaplavení} odlišný od standardních kryptografických argumentů síly filtru. Empirická validace (Sekce~\ref{sec:empirical-attackers}) potvrzuje jeho funkci: přes všechny evaluované třídy útočníků, včetně B.4 AES-Oracle s explicitními pokusy využít stage-b přeživších, nedošlo k úspěšnému obnovení $K^*$ přes $300$ transkriptů na třídu.
+
+\subsection{Kumulativní preimage bariéra}
+
+Pro každý password vektor $v \in \mathcal{P}$ útočník pozoruje z veřejné transkripce:
+\begin{itemize}[leftmargin=*]
+\item $H[0\mathord{:}h_{AB}](v)$ z hashů A$\to$B kola, ve kterém byl $v$ akceptován;
+\item $H[h_{AB}\mathord{:}h_{AB}+h_{BA}](v)$ ze zprávy B$\to$A stejného kola;
+\item $H[h_{AB}+h_{BA}\mathord{:}h_{AB}+h_{BA}+h_P](v)$ ze zprávy Final.
+\end{itemize}
+
+Celkové pozorovatelné hashové omezení na password vektor je $\lambda_\text{preimage} = 8(h_{AB} + h_{BA} + h_P) = 120$ bitů pro referenci v2.
+
+\begin{theorem}[komplexita preimage]\label{thm:preimage}
+Za předpokladu SHA-256 jako náhodného orákula je očekávaný počet vyhodnocení hashe potřebných pro nalezení vektoru $v$ splňujícího $\lambda_\text{preimage}$-bitové omezení roven $2^{\lambda_\text{preimage}}$.
+\end{theorem}
+
+I s uspokojujícím vektorem nemůže útočník jednoznačně identifikovat jako "ten" password vektor: zbývající $8L - \lambda_\text{preimage}$ bitů vektoru je a priori rovnoměrných za předpokladu náhodného orákula. Pro referenci v2 ($L = 32$, $\lambda_\text{preimage} = 120$) to dává $|\{u : H[0{:}\lambda/8](u) = H[0{:}\lambda/8](v)\}| \approx 2^{8L - \lambda_\text{preimage}} = 2^{136} \approx 8{,}7 \cdot 10^{40}$ nerozlišitelných kandidátů.
+
+\paragraph{Dva pohledy na totéž číslo.} Preimage bariéra $2^{120}$ a velikost nerozlišitelné množiny $2^{136}$ jsou komplementární charakterizace téže designované struktury:
+\begin{itemize}[leftmargin=*]
+\item $2^{96}$ je \emph{dolní mez útočnické práce} pro nalezení libovolného jednoho vektoru splňujícího hashová omezení.
+\item $2^{136}$ je \emph{horní mez akcionovatelné informace}, kterou útočník získá na jeden password vektor: i s neomezeným compute má útočníkova kandidátní množina $2^{136}$ prvků, z nichž právě jeden je správný.
+\end{itemize}
+Jejich součin $2^{120} \cdot 2^{136} = 2^{256} = 2^{8L}$ odpovídá velikosti univerza, reflektujíc zachování: $\lambda_\text{preimage}$ bity směňují útočnickou práci proti obraně proti zaplavení. To odhaluje, proč design záměrně udržuje $\lambda_\text{preimage}$ \emph{pod} velikostí univerza --- zvyšování $\lambda_\text{preimage}$ by snížilo velikost nerozlišitelné množiny a vystavilo konstrukci útokům specifické identifikace, přesně tomu způsobu selhání, který AES-CBC NoPadding (Sekce~\ref{sec:aes}) má bránit.
+
+Verifikace vyžaduje, aby útočník také odvodil správné $K_t$ pro AES validaci proti dalšímu kolu --- což vyžaduje \emph{všech} $M$ password vektorů kola, násobí preimage bariéru kombinatorickou komplexitou password množiny.
+
+\subsection{Interakce obran}
+
+Statistický drift (§\ref{sec:drift}) a AES derivace klíče (tato sekce) jsou komplementární obrany:
+
+\begin{itemize}[leftmargin=*]
+\item Drift omezuje distribuci kandidátů: tail-selekce zajišťuje, že kandidáti mají nízké $\Pr_\mathcal{S}$, vyžadujíc exponenciální útočnickou práci pro přímý sampling z distribuce.
+\item AES bez validačního orákula a krátký $h_{BA}$ zajišťují, že i útočníci, kteří obejdou omezení distribuce (např. enumerací s velkým $P$), čelí zaplavení spíše než specifické identifikaci.
+\item Kumulativní preimage bariéra (Věta~\ref{thm:preimage}) nastavuje tvrdou dolní mez na útočnickou práci nezávisle na struktuře distribuce.
+\end{itemize}
+
+Útočník pokoušející se prolomit Grata Cascade musí současně obejít všechny tři: obejít drift-vynucenou tail selekci, porazit obranu proti zaplavení pro identifikaci specifických kandidátů a překonat preimage bariéru. Empirická evaluace (Sekce~\ref{sec:empirical}) potvrzuje, že žádná současná třída útočníků nedosahuje žádného z nich.
+
+\textbf{Limity analýzy.} Tato analýza je \emph{neformální} a nepředstavuje důkaz:
+\begin{enumerate}[leftmargin=*]
+\item Nebyla provedena formální redukce z key-indistinguishability výhody na preimage obtížnost (Otevřený problém~\ref{prob:dynamic-formal}); rozšíření na CKA primitivu se sekvencí klíčů viz Otevřený problém~\ref{prob:cka-extension}.
+\item Multi-round korelační útoky mohou přinést přísnější informaci než součet per-round omezení (Otevřený problém~\ref{prob:multiround}).
+\item Analýza empiricky validuje pouze referenční konfiguraci; jiné parametrické profily vyžadují nezávislou evaluaci (Otevřený problém~\ref{prob:parametric}).
+\end{enumerate}
+
+\section{Empirická evaluace}\label{sec:empirical}
+
+Tato sekce reportuje empirickou evaluaci reference v2 (Tabulka~\ref{tab:params}) implementovanou v C\# (.NET 9, post-F3 SHA-NI). Kompletní kód a reprodukovatelné skripty jsou dostupné v doprovodném repozitáři pod \texttt{configs/reference.json}, \texttt{reports/refv2/} a \texttt{docs/glossary.md}.
+
+\subsection{Konvergence protokolu}\label{sec:empirical-convergence}
+
+Reference v2 byla testována na $5 \times 10^4$ nezávislých bězích (pět paralelních shardů po $10\,000$, agregováno s přečíslovanými run indexy). Per-run metriky jsou perzistovány v jednom CSV (\texttt{reports/refv2/convergence\_50k.csv}, SHA-256 \texttt{834489A6\ldots}) pro reproducibilitu na straně reviewera.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+Výsledek & Počet & Míra \\
+\midrule
+$\text{FH}=\text{true} \land \text{KM}=\text{true}$ (úspěch) & $49\,996$ & $99{,}9920\%$ \\
+$\text{FH}=\text{true} \land \text{KM}=\text{false}$ (divergence) & $4$ & $0{,}0080\%$ \\
+$\text{FH}=\text{false}$ (strukturální selhání) & $0$ & $0{,}0000\%$ \\
+\bottomrule
+\end{tabular}
+\caption{Konvergenční baseline reference v2 ($N = 50\,000$). Per-shard distribuce divergencí $\{1, 0, 2, 0, 1\}$ je Poisson-konzistentní s mírou $\sim 8 \cdot 10^{-5}$. Distribuce iterací: medián $49$, p95 $62$, max $90$. Medián elapsed $1{,}71$ s/běh.}
+\label{tab:f2-v2}
+\end{table}
+
+\textbf{Konfidence míry selhání.} Clopper--Pearsonova horní $95\%$ CI na míru kombinovaného selhání (FH=false nebo KM=false) je $2{,}048 \cdot 10^{-4}$ (oboustranná, $\alpha/2 = 0{,}025$ na chvost).
+
+\textbf{Diagnóza reziduálních divergencí.} Reziduální míra $\sim 8 \cdot 10^{-5}$ je konzistentní s $h_{AB}$-kolizemi jako dominantním zdrojem po posílení $h_P$: v1 reference s $h_P = 4$ produkovala $9$ divergencí v $50\,000$ bězích (míra $\sim 1{,}8 \cdot 10^{-4}$); v2 redukuje pravděpodobnost Final-slot kolize z $2^{-32}$ na $2^{-64}$. Přirozený follow-up — inkrement $h_{AB}$ z $5$ na $6$ — byl empiricky validován a je dále uveden jako Validovaný nález (Sekce~\ref{sec:empirical-habresidual}).
+
+\subsubsection{Ablace $H_{AB} = 6$: Eliminace reziduálních divergencí}\label{sec:empirical-habresidual}
+
+Model $h_{AB}$-kolizí výše predikuje, že inkrement $h_{AB}$ z $5$ na $6$ sníží pravděpodobnost kolize na kolo o $2^8 = 256\times$, s predikovanou reziduální mírou $\sim 3 \cdot 10^{-7}$ za cenu $+N$ bytů na kolo (tj.\ $+4$ KB na kolo při $N = 4096$). Tuto predikci jsme empiricky ověřili.
+
+Konfigurace \texttt{reference\_h\_AB6} (klon reference v2 s $h_{AB} = 5 \to 6$, ostatní parametry držené na v2 defaultech; $\lambda_\text{preimage} = 8 \cdot (6+2+8) = 128$ bitů oproti reference v2 $120$) byla spuštěna na $5 \times 10^4$ konvergenčních zkoušek. Výsledek: $50\,000 / 50\,000 = 100{,}0000\%$ míra Final-hit; $50\,000 / 50\,000 = 100{,}0000\%$ míra keys-match (žádné divergence). Clopper--Pearsonovo horní $95\%$ CI na míru selhání je $7{,}38 \cdot 10^{-5}$, leží \emph{pod} reference v2 ($h_{AB}=5$) pozorovanou mírou $8{,}0 \cdot 10^{-5}$ — přímé empirické potvrzení, že $+1$ byte $h_{AB}$ skutečně snižuje reziduální divergenci pod baseline v2.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Škálování $h_{AB}$-kolizního reziduálu napříč čtyřmi empirickými body.}
+\label{tab:hab-scaling}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Profil} & \textbf{$h_{AB}$ (bit)} & \textbf{$N$} & \textbf{$n$} & \textbf{Pozorováno} & \textbf{CP horní $95\%$ CI} \\
+\midrule
+F13-v2 IoT             & $32$ & $1024$ & $200$    & $1/200 = 5 \cdot 10^{-3}$ & $2{,}8 \cdot 10^{-2}$ \\
+Reference v2 (kotva)   & $40$ & $4096$ & $50\,000$ & $4/50\,000 = 8 \cdot 10^{-5}$ & $2{,}05 \cdot 10^{-4}$ \\
+\textbf{$h_{AB} = 6$ ablace} & \textbf{$48$} & \textbf{$4096$} & \textbf{$50\,000$} & \textbf{$0/50\,000$}  & \textbf{$7{,}38 \cdot 10^{-5}$} \\
+F11-v2 pq128           & $48$ & $8192$ & $200$    & $0/200$                  & $1{,}5 \cdot 10^{-2}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Tyto čtyři body pokrývají rozpětí $16$ bitů $h_{AB}$ (32~bit $\to$ 48~bit). Řádek $h_{AB} = 6$ na referenční škále ($N = 4096$) je nejčistším testem škálování: variuje pouze $h_{AB}$ vůči F2-v2 kotvě, ostatní parametry drženy. Pozorované horní CP $7{,}38 \cdot 10^{-5}$ je nejsilnějším důkazem — leží \emph{pod} mírou baseline reference v2 ($8{,}0 \cdot 10^{-5}$) při $50\,000$ zkouškách.
+
+Distribuce iterací při $h_{AB} = 6$ je statisticky identická s reference v2 (medián $49$, průměr $49{,}43$, p95 $61$, max $85$); přidaný byte nezpomaluje konvergenci protokolu. Trade-off na bandwidth je $+4$ KB na kolo při $N = 4096$, $\sim 20\%$ navýšení pouze na A$\to$B kanálu.
+
+\textbf{Implikace.} \texttt{reference\_h\_AB6} je kvalifikovaným kandidátem na v3 reference profil. Povýšení by definitivně zavřelo otázku $h_{AB}$-reziduálu a posunulo nasazovací baseline z $\lambda_\text{preimage} = 120$ bitů ($\sim 2^{136}$ nerozlišitelná množina) na $\lambda_\text{preimage} = 128$ bitů výměnou za výše uvedený bandwidth-overhead.
+
+\subsection{Statistická uniformita výstupních klíčů}\label{sec:empirical-nist}
+
+Sebrali jsme $1000$ nezávislých klíčů reference v2 ($999$ zahrnuto; $1$ vypadl díky KM divergenci, konzistentní s mírou výše) a aplikovali 12-testovou sadu NIST SP 800-22~\cite{NIST800-22}. Agregovaný bitstream je $255\,744$ bitů ($31\,968$ bajtů). Všech 12 testů prošlo na $\alpha = 0{,}01$; nejnižší $p$-hodnota $0{,}3156$ (Binary Matrix Rank). Podrobné výsledky v Dodatku~\ref{app:nist}.
+
+\subsection{Kalibrace parametrů systematickými sweepy}\label{sec:empirical-calibration}
+
+Tři parametry --- $p_\text{upd}$, $\theta_\text{cand}$ a $s$ (rozsah perturbace seedu) --- byly kalibrovány systematickými sweepy na referenční konfiguraci. Všechny sweepy používaly safety guards (iteration cap $200$, paměťové omezení $2$ GB na worker, early abort při $< 25\%$ konvergenci) vyvinuté během F4 fáze kalibrace a znovu použité v následných sweepech.
+
+\subsubsection{$\theta_\text{cand}$ úzký sweep}\label{sec:empirical-cand}
+
+Hodnoty v $\{-85, -90, -95, -100, -105, -110, -115\}$ při $p_\text{upd} = 0{,}75$, $N = 200$ běhů na hodnotu:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rrrrrr}
+\toprule
+$\theta_\text{cand}$ & FH/N & iter(mean) & skipped\_avg & ratio & avg\_pw\_log2 \\
+\midrule
+$-85$ & 200/200 & 61 & 9{,}7 & 15{,}8\% & $-163{,}05$ \\
+$-90$ & 200/200 & 63 & 14{,}9 & 23{,}5\% & $-164{,}61$ \\
+$-95$ & 200/200 & 72 & 23{,}0 & 32{,}0\% & $-165{,}92$ \\
+$-100$ & 200/200 & 82 & 34{,}2 & 41{,}4\% & $-166{,}92$ \\
+$-105$ & 198/200 & 110 & 59{,}0 & 53{,}8\% & $-169{,}18$ \\
+$-110$ & 136/200 & 162 & 104{,}4 & 64{,}4\% & $-173{,}99$ \\
+$-115$ & 2/200 & 195 & 142{,}6 & 73{,}1\% & $-180{,}40$ \\
+\bottomrule
+\end{tabular}
+\caption{$\theta_\text{cand}$ úzký sweep na referenci. Přechod ke kolapsu konvergence je plynulý a monotonní; $\theta_\text{cand} = -95$ je kalibrovaná reference: nejstriktnější hodnota zachovávající $100\%$ konvergenci s ratio skipped $\leq 40\%$.}
+\label{tab:cand-sweep}
+\end{table}
+
+\subsubsection{$p_\text{upd}$ sweep}\label{sec:empirical-pupd}
+
+Hodnoty v $\{0{,}1, 0{,}25, 0{,}5, 0{,}75, 0{,}9, 0{,}95, 1{,}0\}$ s $\theta_\text{cand} = -95$:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rrrrrr}
+\toprule
+$p_\text{upd}$ & FH/N & iter(p50) & stat\_entropy & stat\_max\_prob & avg\_pw\_log2 \\
+\midrule
+$0{,}10$ & 0/50 & 201 (cap) & 7{,}55 & 0{,}04 & NaN \\
+$0{,}25$ & 0/50 & 201 (cap) & 7{,}09 & 0{,}09 & NaN \\
+$0{,}50$ & 0/50 & 201 (cap) & 6{,}13 & 0{,}16 & NaN \\
+$0{,}75$ & 200/200 & 67 & 4{,}49 & 0{,}33 & $-165{,}10$ \\
+$0{,}90$ & 174/200 & 106 & 2{,}69 & 0{,}58 & $-167{,}45$ \\
+$0{,}95$ & 0/50 & 201 (cap) & 1{,}68 & 0{,}74 & NaN \\
+$1{,}00$ & 0/50 & 201 (cap) & 0{,}00 & 1{,}00 & NaN \\
+\bottomrule
+\end{tabular}
+\caption{$p_\text{upd}$ sweep na referenci. Monotonní Stat koncentrace s rostoucím $p_\text{upd}$. Konvergence je úzká: $p_\text{upd} \leq 0{,}5$ selhává (nedostatečné formování driftu); $p_\text{upd} \geq 0{,}95$ selhává (Stat kolaps hladoví filtrovaný výběr kandidátů). Operační rozsah: $[0{,}6, 0{,}95]$.}
+\label{tab:pupd-sweep}
+\end{table}
+
+\subsubsection{Ablace $\theta_\text{cand}$: Validace bezpečnostní role}\label{sec:empirical-pupd-ablation}
+
+Pro ověření bezpečnostní role $\theta_\text{cand}$ jsme opakovali $p_\text{upd}$ sweep s vypnutým filtrem:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rrrr}
+\toprule
+$p_\text{upd}$ & FH/N (filtrováno $-95$) & FH/N (vypnuto) & avg\_pw\_log2 vypnuto \\
+\midrule
+$0{,}75$ & 200/200 & 200/200 & $-158$ \\
+$0{,}90$ & 174/200 & 200/200 & $-150$ \\
+$0{,}95$ & 0/50 & 200/200 & $-143$ \\
+$1{,}00$ & 0/50 & 200/200 & $-53$ \\
+\bottomrule
+\end{tabular}
+\caption{Ablace potvrzuje bezpečnostní roli $\theta_\text{cand}$ pod Stat koncentrací. Bez filtru vysoké $p_\text{upd}$ zachovává konvergenci, ale kolabuje log-pravděpodobnost kandidátů z $\approx -160$ na $\approx -53$ při $p_\text{upd} = 1{,}0$, vystavujíc kandidáty přímé statistické generaci útočníky s rekonstruovatelným Stat.}
+\label{tab:pupd-ablation}
+\end{table}
+
+Filtr vynucuje strukturální bezpečnost za cenu omezení životaschopného rozsahu $p_\text{upd}$. Referenční konfigurace obchoduje upper-edge životaschopnost ($p_\text{upd} = 0{,}95$) za přibližně $100$ bitů bezpečnostní rezervy v hloubce distribuce kandidátů.
+
+\subsubsection{Sweep rozsahu perturbace seedu $s$}\label{sec:empirical-seed}
+
+Hodnoty $s \in \{1, 2, 3, 5, 7, 10, 15, 30\}$ s referenční konfigurací ($\theta_\text{cand} = -95$, $p_\text{upd} = 0{,}75$), $N = 200$ běhů na hodnotu:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rrrrrl}
+\toprule
+$s$ & FH/N & iter(med) & avg\_pw\_log2 & $\rho_\text{pool}$ ($\log_2$) & Poznámka \\
+\midrule
+$1$ & 200/200 & 68 & $-165{,}78$ & $-38{,}7$ & 39 bitů hustší než ref \\
+$2$ & 200/200 & 70 & $-165{,}85$ & $-65{,}7$ & 12 bitů hustší než ref \\
+$3$ & 200/200 & 68 & $-166{,}32$ & $-77{,}8$ & Reference \\
+$5$ & 200/200 & 69 & $-166{,}30$ & $-101{,}1$ & 23 bitů řidší \\
+$7$ & 200/200 & 69 & $-164{,}98$ & $-119{,}5$ & 42 bitů řidší \\
+$10$ & 200/200 & 70 & $-165{,}29$ & $-141{,}0$ & 63 bitů řidší \\
+$15$ & 200/200 & 69 & $-165{,}84$ & $-167{,}5$ & 90 bitů řidší \\
+$30$ & 200/200 & 68 & $-163{,}78$ & $-220{,}9$ & 143 bitů řidší \\
+\bottomrule
+\end{tabular}
+\caption{Sweep rozsahu perturbace seedu ($N = 200$ běhů na hodnotu). Konvergence je invariantní přes $s \in [1, 30]$: $1600/1600$ běhů, iter(med) rozptyl $\pm 1$, avg\_pw\_log2 rozptyl $\pm 1{,}3$ bitů. Hustota poolu $\rho_\text{pool}$ se mění o $182$ bitů přes rozsah, aniž by to ovlivnilo výkon konvergence, podporujíc strukturální argument, že drift dominuje hustotu poolu v dynamice konvergence.}
+\label{tab:seed-sweep}
+\end{table}
+
+\paragraph{B.4 dense-pool re-test.} $s$-sweep umožnil empirický re-test B.4 AES-Oracle útočníka při zhuštěných poolových podmínkách. S $s = 1$ dávajícím $\rho \approx 2^{-38}$ ($39$ bitů hustší než reference) byl nulový-výkon výsledek diskriminátoru potvrzen: přes $s \in \{1, 2, 3\}$ s $30$ transkripty na hodnotu, celkem $2{,}3 \cdot 10^{8}$ near-seed vzorků, průměrná TP míra $\approx 0$ odpovídá průměrné FP míře $\approx 0$ (úroveň Poisson šumu). To empiricky vyvrací hypotézu, že zvýšená hustota poolu by odhalila diskriminátorský signál, a podporuje interpretaci, že AES derivace klíče (nikoli řídkost poolu) je dominantní obranou proti B.4-třídě útoků.
+
+\subsection{Per-profile validace}\label{sec:empirical-profiles}
+
+Každý ze čtyř kalibrovaných parametrických profilů (Tabulka~\ref{tab:profiles}) byl nezávisle validován na konvergenci a statistickou uniformitu.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrl}
+\toprule
+Profil & FH/N & KM/N & iter(med) & NIST PASS/N/A & Poznámka \\
+\midrule
+Reference & 200/200 & 200/200 & 49 & 12/12, 0 N/A & Primární \\
+IoT & 200/200 & 200/200 & 68 & 11/12, 1 N/A & $h_P=4$ po opravě \\
+Mobile & 200/200 & 200/200 & 48 & 11/12, 1 N/A & --- \\
+HighSec Classical & 200/200 & 200/200 & 89 & 11/12, 1 N/A & --- \\
+HighSec PQ128 & 50/50 & 50/50 & 69 & 10/12, 1 N/A & --- \\
+\bottomrule
+\end{tabular}
+\caption{Per-profile validace: $200$-run konvergence a $100$-key NIST battery. "N/A" označuje test Binary Matrix Rank přeskočený kvůli nedostatečné délce vstupu ($100$-key battery dává $\sim 25\,600$ bitů, BMR vyžaduje $\geq 38\,912$ bitů pro $32 \times 32$ matrix testování). HighSec PQ128 profil ukazuje jedno dodatečné marginální selhání (Block Frequency, $p = 0{,}0035$) konzistentní se šumem multi-test battery; disambiguation re-run s $500$ klíči je plánován.}
+\label{tab:profiles-validation}
+\end{table}
+
+IoT profil vyžadoval úpravu délky hashe z původního $h_P = 3$ na $h_P = 4$. Původní $h_P = 3$ vykazoval přibližně $2{,}5\%$ silent key mismatch (kolize Final hash v $24$-bitovém prostoru): $200/200$ FH, ale pouze $195/200$ KM. Zvýšení na $h_P = 4$ zvyšuje preimage bariéru ze $72$ na $80$ bitů a snižuje pravděpodobnost kolize z $2^{-24}$ na $2^{-32}$, obnovujíc $200/200$ KM s marginálním bandwidth overheadem ($+8$ bajtů na Final zprávu) a $+8$ bitů kumulativní preimage bezpečnosti.
+
+\subsection{Katalog pasivních útočníků}\label{sec:empirical-attackers}
+
+Implementováno a evaluováno bylo pět tříd pasivních útočníků. První čtyři (B.1--B.4) jsou hlášeny na transkriptech reference v2 při $N = 300$. Pátý (B.7) je deterministický Stat-prior latticový enumerátor přidaný v v8; uvádíme jeho dual-mode chování proti research-only profilu \texttt{break\_demo} (úmyslně oslabený design, který nejjasněji odhaluje strukturu kaskády), s evaluací proti reference v2 odloženou.
+
+\subsubsection{B.1 Baseline Random}\label{sec:adv-b1}
+Rovnoměrný náhodný sampling $L$-bajtů, testování shody SHA-256 prefixu proti Final hashům ($h_P = 8$ B v v2, očekávaná práce $2^{64}$ na slot). Time-budget omezený ($600$ s/transkript v v2).
+
+\subsubsection{B.2 Hash-First Filtered}\label{sec:adv-b2}
+Kaskádová filtrace přes tři progresivně se zužující hashová omezení: A$\to$B ($5$ B), B$\to$A ($2$ B), Final ($8$ B). Očekávaný celkový filtrační faktor $2^{120}$. Pool size $P = 10^7$.
+
+\subsubsection{B.3 Tail-Informed Sampler}\label{sec:adv-b3}
+Modifikace B.2, kde generování kandidátů čerpá z rekonstruovaného tailu Stat distribuce. Pool size $P = 10^7$.
+
+\subsubsection{B.4 AES-Oracle Discriminator}\label{sec:adv-b4}
+Po hypotetickém stage-b kandidátovi dešifruje AES a validuje regenerací near-seed poolu a testováním proti hashům A$\to$B dalšího kola. Diskriminační síla měřena jako TP/FP rates a Cohenovo $d$ přes $K = 10^6$ near-seed samples per round pair.
+
+\subsubsection{B.7 Stat-Sorted Enumeration}\label{sec:adv-b7}
+Deterministická top-$K$ enumerace kandidátních vektorů v pořadí joint Stat pravděpodobnosti, nahrazující random sampling B.2/B.3 Lawler-style best-first latticovou traverzí: priority queue na $-\log p$ joint cost, inkrementální cost update na expanzi sousedů, visited-set dedup keyed na zabalených rank-tuplech ($L \le 8$).
+
+Dva módy:
+\begin{itemize}[leftmargin=*]
+\item \emph{Typical} — vektory yieldovány v klesající joint Stat pravděpodobnosti (každý byte na své lokálně nejčastější hodnotě). Predikováno matchovat A's pool populaci.
+\item \emph{Tail} — vektory yieldovány v rostoucí joint Stat pravděpodobnosti (každý byte na své lokálně nejvzácnější hodnotě). Predikováno matchovat protokolovou CandMax-filtrovanou atypickou pasword sadu.
+\end{itemize}
+
+Validace proti \texttt{break\_demo} ($L=8$, $N=256$, $h_{AB}=3$, $h_{BA}=1$, $h_P=3$, $M=4$, $p_\text{upd}=1{,}0$, $\lambda_\text{preimage} = 56$ bitů) přes $n = 300$ transkriptů: $0/300$ obnovení $K^*$ v obou módech (CP horní $95\%$ CI $1{,}222\%$). Dual-mode zkoumání odhalilo, že kaskádový filtr $h_{AB}+h_{BA}+h_P$ blokuje Stat-prior enumeraci v obou směrech na různých stage: Typical-first matchuje A's pool ($4\times$ zvýšená stage-a hit rate) ale míjí CandMax-filtrované atypické password sloty; Tail-first produkuje ``anti-pool'' vektory ($5 \cdot 10^5$-krát snížená stage-a) a nikdy nedosáhne kaskády. $10\times$-budget re-test (B.7-Tail při $10^7$ pool) potvrdil, že limit není směr enumerace ale struktura kaskády: stage-a rate při $10^7$ konverguje k random baseline ($1{,}9 \cdot 10^{-3}$), jakmile lattice vyčerpá při $\sim 1{,}7 \cdot 10^6$ vzorcích. Evaluace B.7 proti reference v2 zůstává odložena.
+
+\paragraph{Hlavní výsledky ($N = 300$ na referenci v2; B.7 řádek je výsledek na break_demo, viz §\ref{sec:adv-b7}).}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Útočník & Běhů & Obnovení $K^*$ & Úspěšnost & 95\% CI horní & Avg time/run \\
+\midrule
+B.1 Baseline Random & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $600{,}0$ s (cap) \\
+B.2 Hash-First & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $56{,}7$ s \\
+B.3 Structured (Tail) & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $130{,}5$ s \\
+B.4 AES-Oracle & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $335{,}1$ s \\
+B.7 Stat-Sorted (Tail, na \texttt{break\_demo}) & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $59{,}0$ s ($10^7$ pool) \\
+\bottomrule
+\end{tabular}
+\caption{Evaluace pasivních útočníků. Řádky B.1--B.4 pod referencí v2 přes $N = 300$ transkriptů (B.5-extended-v2). Sdílená sada transkriptů, SHA-256 \texttt{54D24794\ldots}. Celkový compute $\sim 10^{11}$ SHA-256 vyhodnocení, wall-clock $6$h $33$m na $22$ workerech. Řádek B.7 reportuje \texttt{break\_demo} dual-mode zkoumání (Tail mode při $10^7$ pool); evaluace B.7 proti reference v2 odložena. Persistentní artefakty: \texttt{reports/refv2/b5\_extended\_results.csv} (B.1--B.4) a \texttt{reports/refv2/break\_demo/} (B.7).}
+\label{tab:attackers}
+\end{table}
+
+Žádný útočník nedosáhl obnovení $K^*$ napříč $300$ transkripty v žádné ze čtyř reference-v2 tříd (B.1--B.4); B.7 hlášený zvlášť na \texttt{break\_demo}. Jednostranná Clopper--Pearsonova horní $95\%$ CI je $1{,}222\%$ pro každou třídu.
+
+\paragraph{Diskriminační síla B.4 orákula.} Přes $10\,262$ round-pairs a $2{,}05 \cdot 10^{10}$ dotazů: mean TP $0{,}003411$, mean FP $0{,}002923$, Cohenovo $d = 0{,}009$. Diskriminátor nevykazuje \emph{žádnou měřitelnou sílu}: empirická míra FP je v analytickém pásmu predikce SHA-orákula ($\mathbb{E}[\text{FP}] = 0{,}003725$). RNG cross-check na B.1 sampler: Shannon entropie $7{,}999996$ bitů/bajt $\approx$ rovnoměrná.
+
+\paragraph{Validace stage kaskády (B.2).} Přes $300$ transkriptů: $503$ kol se stage-a hity ($515$ celkem hitů), $0$ kol se stage-b hitem, $0$ kol se stage-c hitem. Stage-a hity odpovídají analytické kaskádě v rámci Poisson šumu.
+
+\subsection{Shrnutí}
+
+Celkový compute pod referencí v2: $\sim 10^{11}$ SHA-256 vyhodnocení napříč battery čtyř útočníků. Klíčová zjištění:
+
+\begin{itemize}[leftmargin=*]
+\item Final-hit rate $100\%$ přes $5 \times 10^4$ běhů; keys-match rate $99{,}992\%$ ($4$ divergence, dominantní reziduální zdroj: $h_{AB}$ kolize).
+\item Clopper--Pearsonova horní $95\%$ CI na kombinované selhání konvergence: $2{,}05 \cdot 10^{-4}$.
+\item NIST SP 800-22: $12/12$ PASS přes $1000$ klíčů ($255\,744$ bitů).
+\item Žádný pasivní útočník neobnovil $K^*$ přes $N = 300$ transkriptů; CP horní $95\%$ CI per třída $1{,}222\%$.
+\item B.4 diskriminátor: Cohenovo $d = 0{,}009$ přes $2{,}05 \cdot 10^{10}$ dotazů (žádná měřitelná síla).
+\item Kaskády stage filtrace odpovídají analytickým predikcím v rámci Poisson šumu.
+\end{itemize}
+
+Výsledky empiricky validují referenci v2 v rámci testovaného modelu útočníka. Re-derivace profilů Mobile a HighSec, aktivní útočníci (delegováni na transport), ML útoky na transkripty, multi-round agregace slabých signálů a postranní kanály zůstávají mimo současnou validaci (Sekce~\ref{sec:open}).
+
+\paragraph{Implementační poznámka.} Generování náhodných čísel v implementaci protokolu používá \texttt{System.Security.Cryptography.RandomNumberGenerator}, kryptograficky bezpečný PRNG. Všechny uvedené výsledky byly získány po migraci ze \texttt{System.Random}; výsledky před migrací jsou zachovány odděleně pro reprodukovatelnost.
+
+\section{Srovnání s jednorázovými KE primitivami}\label{sec:comparison}
+
+Grata Cascade je v této práci pozicována jako \emph{jednorázová} primitiva domluvy klíče (Sekce~\ref{sec:gc-as-candidate}, \ref{sec:related-cka}). Srovnání je proto směřováno k existujícím jednorázovým KE primitivám standardně nasazovaným v hybridních postkvantových kompozicích, nikoli k CKA konstrukcím (Signal Double Ratchet, MLS, Triple Ratchet). Pro vztah k CKA viz Sekci~\ref{sec:related-cka} a otevřený problém~\texttt{prob:cka-extension}.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lllll}
+\toprule
+Schéma & Báze & PQ bezpečnost & Objem dat / sezení & Formální důkaz \\
+\midrule
+ECDH (X25519) & DLP & Ne (Shor) & $\sim 32$ B & Ano (ROM) \\
+ML-KEM-768 & Module-LWE & Ano & $\sim 1{,}2$ KB & Ano (ROM) \\
+X-Wing~\cite{xwing} & DLP $+$ Module-LWE & Ano & $\sim 1{,}3$ KB & Ano \\
+Merklovy puzzly~\cite{Merkle1978} & Hash preimage & Ano (Grover) & $O(N^2)$ work & Ano (IR89) \\
+\textbf{Grata Cascade (ref v2)} & Hash preimage $+$ drift & Ano (konj.) & $\sim 1$ MB & Ne (otev.) \\
+\bottomrule
+\end{tabular}
+\caption{Srovnání jednorázových KE primitiv. Báze označuje výpočetní předpoklad, na němž stojí bezpečnost. ,,Konj.`` = konjekturální (strukturálně argumentováno, formálně neprokázáno). ,,IR89`` = Impagliazzo--Rudich black-box bound~\cite{IR1989}. Objem dat pro ECDH a ML-KEM je round-trip; pro Grata Cascade je celé sezení (~49 kol $\times$ ~20 KB).}
+\label{tab:comparison}
+\end{table}
+
+\paragraph{Diskuse.} Grata Cascade je ve velikosti přenášených dat \emph{přibližně tři řády horší} než ML-KEM a téměř pět řádů horší než ECDH. To je zásadní inženýrská nevýhoda a vylučuje ji z drtivé většiny produkčních deploymentů, kde je objem dat citlivý parametr (mobilní data, IoT). Otevřený problém~\texttt{prob:bandwidth} (Sekce~\ref{sec:open}) navrhuje konkrétní cesty k redukci.
+
+Potenciální hodnota Grata Cascade neleží v efektivnosti, ale v \emph{strukturální kryptografické diverzifikaci}:
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{Hybrid X-Wing kompozice} (X25519 $\oplus$ ML-KEM-768) stojí na dvou nezávislých výpočetních předpokladech: DLP (zranitelný Shorovi) a Module-LWE (postkvantově bezpečný za známých útoků, ale cryptographicky relativně mladý). Útočník by musel prolomit \emph{oba} pro získání klíče.
+\item Grata Cascade stojí na \emph{třetí} strukturálně nezávislé bázi: SHA-256 preimage hardness v kombinaci se statistickým driftem. Tato báze je zcela jiné povahy než DLP nebo Module-LWE; nepoužívá algebraickou strukturu (grupy, mřížky), pouze hashe a statistický drift.
+\item V hybridní kompozici typu X-Wing přidává Grata Cascade třetí vrstvu, jejíž souběžné prolomení s DLP \emph{i} Module-LWE by vyžadovalo tři nezávislé pokroky kryptanalýzy. To je hodnota \emph{computational diversification} přenesená z dvou na tři nezávislé asumce.
+\item SHA-256 odolnost vůči preimage si zachovává postkvantovou bezpečnost s Groverovým zpomalením $2^{n/2}$: pro SHA-256 plný hash zůstává postkvantově bezpečný na $2^{128}$ (oproti klasickým $2^{256}$). Naše konkrétní bariéra $\lambda = 120$ bitů (Sekce~\ref{sec:rationale}) tedy poskytuje strukturálně postkvantovou bezpečnost.
+\end{itemize}
+
+\paragraph{Vůči Merklovým puzzlům.} Klasická hashová KE primitiva, Merklovy puzzly, dosahuje $O(N^2)$ útočnické práce nad $O(N)$ legitimní práce, což je dle Impagliazzo--Rudich~\cite{IR1989} optimum v black-box modelu. Pro $\lambda = 128$ bitů to vyžaduje $N \approx 2^{64}$ rebusů, což je deployment-prohibitivní. Grata Cascade konjekturálně překračuje tento black-box bound díky kombinaci hashe se statistickým driftem (otevřený problém~\texttt{prob:dynamic-formal}). Pokud bude formálně potvrzeno, bude to první nasaditelná hash-only KE primitiva s lepším bandwidth-bezpečnost tradeoffem než Merkle.
+
+\paragraph{Pozice v hybridním stacku.} Grata Cascade \emph{není} pokus nahradit ECDH nebo ML-KEM. Je pozicována jako \emph{třetí rovnoprávná vrstva} v rozšířené X-Wing-style kompozici, kde efektivnost je sekundární vůči nezávislosti asumcí. Konkrétní deployment scénář: hybridní stack X25519 $\oplus$ ML-KEM-768 $\oplus$ Grata Cascade poskytuje computational diversification přes tři strukturálně různé asumce za cenu navýšení per-session objemu dat o $\sim 1$ MB.
+
+\section{Otevřené problémy}\label{sec:open}
+
+\begin{openproblem}[Rozšíření na CKA primitivu]\label{prob:cka-extension}
+Grata Cascade definovaná v této práci je \emph{jednorázová} primitiva domluvy klíče: každé sezení konverguje k jednomu sdílenému $K^*$ za $\sim 49$ kol, bez vestavěného mechanismu pro průběžnou rotaci klíče. Pro použití jako CKA primitiva ve smyslu Alwen--Coretti--Dodis~\cite{ACD19} (s formálními zárukami forward secrecy a post-compromise security napříč pokračující sekvencí odvozených klíčů) jsou potřeba tři rozšíření, vyspecifikujeme tři možné cesty. \textbf{Path A} je primárním cílem pro follow-up paper s formální redukcí na single-session security; cesty B a C zůstávají jako alternativy.
+
+\paragraph{Path A --- Repeated-session chaining (primární cíl).}
+Spustit Grata Cascade jako primitivu rotace klíče: každé nové sezení $i+1$ použije $K^*_i$ jako seed promíchaný do počáteční Stat distribuce sezení $i+1$, s injekcí čerstvé náhodnosti pro post-compromise security. Cena konvergence amortizuje špatně (jedno plné sezení $\sim 49$ kol per rotace klíče, $\sim 1$ MB objemu dat per rotace). Forward secrecy plyne z jednosměrného odvození $K^*_i \to K^*_{i+1}$. PCS vyžaduje injekci čerstvé náhodnosti, načrtnutou níže.
+
+\emph{Formální požadavky pro Path A:}
+\begin{itemize}[leftmargin=*]
+\item Game-based důkaz: rozlišení $K^*_{i+1}$ od náhodného při daných transkripcích sezení $\leq i$ se redukuje na bezpečnost single-session KA.
+\item PCS důkaz: čas obnovy stavu omezen na $\max(\text{kola jednoho sezení})$.
+\item Konkrétní mez: pro reference v2 s $\lambda_\text{preimage} = 120$ bitů každý rotovaný klíč dědí stejnou 120-bitovou bariéru.
+\end{itemize}
+
+\paragraph{Path B --- Symetrický ratchet nad jedním sezením.}
+Použít jedno sezení Grata Cascade k bootstrapování $K^*_0$, pak odvozovat následující klíče $K^*_i = \mathrm{HKDF}(K^*_{i-1}, \mathrm{salt}_i)$, kde $\mathrm{salt}_i$ je veřejně přenášená. To je v podstatě symetrický KDF ratchet z Signal stacku~\cite{DR2017}, aplikovaný nad GC. Levné ($\sim$ µs per rotace), ale \emph{nedědí} PCS od GC samotného --- bezpečnost $K^*_i$ je nejvýše bezpečnost $K^*_0$.
+
+\emph{Použití:} GC bootstrapuje dlouhodobý klíč, pak symetrický ratchet zvládá vysokofrekvenční rotaci klíče per zpráva. Skládá se čistě s existujícími hybridními messaging stacky.
+
+\paragraph{Path C --- Nativní CKA konstrukce.}
+Přepracovat GC tak, aby nativně produkovala sekvenci $\{k_1, k_2, \ldots\}$ per sezení. Spekulativní směr: každé kolo kaskády emituje ,,vydaný`` klíč odvozený ze současného stavu, zatímco ,,udržovaný`` stav pokračuje v driftu. Forward secrecy z drift one-way property; PCS z $R_t$ injekce náhodnosti.
+
+\emph{Formální požadavky pro Path C:}
+\begin{itemize}[leftmargin=*]
+\item CKA security game per ACD19 Definice~1.
+\item FS důkaz: rozlišení $k_t$ od náhodného při daných $(k_1, \ldots, k_{t-1})$ a plné transkripci se redukuje na nepředvídatelnost driftu v $t$-tém kole.
+\item PCS důkaz: po kompromitaci v čase $t$ a obnově v $t+\delta$ je $k_{t+\delta+\epsilon}$ výpočetně nerozlišitelné od náhodného pro dostatečné $\epsilon$.
+\end{itemize}
+
+\paragraph{Srovnání a doporučení.}
+Path A je strukturálně nejčistší a poskytuje přímý formální target (redukce na single-session security); je drahá ($\sim$ 1 MB per rotace), ale defensible jako follow-up paper. Path B je nejblíže nasaditelná dnes (skládá se s existujícím Signal-style stackem); poskytuje FS, ale dědí PCS pouze od bootstrapping GC, ne od ratchetu samotného. Path C je nejvíc novel, ale vyžaduje fundamental redesign a novou bezpečnostní analýzu --- long-term research direction.
+
+\textbf{Tato práce nenavrhuje konkrétní rozšíření}, pouze poskytuje strukturu pro budoucí research. Formální definice CKA hry, vlastnosti, kterých je třeba dosáhnout, a redukce na underlying primitivy zůstávají otevřené pro každou ze tří cest.
+\end{openproblem}
+
+\begin{openproblem}[Formalizace dynamické asymetrie]\label{prob:dynamic-formal}
+Statická asymetrie z birthday bound $R \approx n/k$ z Věty~\ref{thm:asymmetry} poskytuje dolní mez na výhodu legitimních stran nad útočníkem v Grata Cascade. Dynamické mechanismy (deterministické adresování přes hash, synchronizovaný statistický drift, multi-round iterativní zpřesňování) tuto mez posilují, ale kvantitativní formalizace posílení zůstává otevřená. Specificky: odvodit analytickou mez na útočnickou výhodu jako funkci (kola, parametry, Stat koncentrace) za předpokladu náhodného orákula pro SHA-256. Redukce na obtížnost preimage SHA-256 je podkomponentou této větší formalizace. Toto je --- spolu s~\texttt{prob:cka-extension} --- centrální otevřený problém; jeho řešení by převedlo empirické bezpečnostní tvrzení tohoto paperu na formální kryptografické garance pro single-session bezpečnost $K^*$, což by zase poskytlo bázi pro Path A v~\texttt{prob:cka-extension}.
+\end{openproblem}
+
+\begin{openproblem}[Plná parametrická útočnická analýza]\label{prob:parametric}
+Tři produkční parametrické profily (Tabulka~\ref{tab:profiles}) jsou specifikovány podle tří designových rationale pro hashe (Sekce~\ref{sec:rationale}); empirická validace na baseline parametrech (Dodatek~\ref{app:preliminary}) stanovuje konvergenci a statistickou uniformitu pro parametry blízké, ale ne identické s produkčními hodnotami. Rigorózní evaluace pasivních útočníků (B.1--B.4 s $N \geq 300$ transkripty na profil) při re-kalibrovaných produkčních parametrech, společně s per-profile konstrukcí Pareto hranice v (bezpečnost, bandwidth, konvergence, paměť) prostoru, je plánovaná navazující práce.
+\end{openproblem}
+
+\begin{openproblem}[Multi-round agregace slabých signálů]\label{prob:multiround}
+Per-round B.4 diskriminátor nemá detekovatelnou sílu přes $2{,}2 \cdot 10^{10}$ dotazů (Sekce~\ref{sec:empirical-attackers}) a přes $182$ bitů variace hustoty poolu (Sekce~\ref{sec:empirical-seed}). Útočník agregující slabé signály přes $k$ kol získá velikost efektu $d_0 \sqrt{k}$; pro $d_0 = 0{,}1$, $k = 50$, $d \approx 0{,}7$ je detekovatelné. Zda je taková agregace dosažitelná pro B.4-třídu útočníků proti Grata Cascade --- vzhledem k tomu, že single-round signál je pod empirickým detekčním prahem --- zůstává otevřené.
+\end{openproblem}
+
+% prob:hab-residual uzavřen v v8 — empiricky validován ablací H_AB=6
+% (Sekce~\ref{sec:empirical-habresidual}). Štítek zachován jako stub, aby
+% případné historické \ref{prob:hab-residual} cross-references stále resolvovaly.
+\begin{openproblem}[Eliminace reziduálních divergencí $h_{AB}$ — \textbf{uzavřeno v v8}]\label{prob:hab-residual}
+Uzavřeno v v8 přímou ablací $h_{AB} = 6$ na referenční škále: $0$ keys-match divergencí v $5 \times 10^4$ bězích, Clopper--Pearsonovo horní $95\%$ CI na míře selhání $7{,}38 \cdot 10^{-5}$ (pod baseline reference v2 $8{,}0 \cdot 10^{-5}$). Plná zpráva v Sekci~\ref{sec:empirical-habresidual}.
+\end{openproblem}
+
+\begin{openproblem}[Dynamický $p_\text{upd}$]\label{prob:pupd-dynamic}
+Statický $p_\text{upd} = 0{,}75$ je empiricky kalibrovaný jako optimální v referenčním operačním rozsahu $[0{,}6, 0{,}95]$ (Sekce~\ref{sec:p-upd}). Dynamická varianta, kde je $p_\text{upd}$ odvozeno ze sdíleného tajného stavu (namísto fixního), by vynutila útočníka rekonstruovat plnou Stat rodinu $\mathcal{S}_\theta$ pro neznámý derivační parametr $\theta$, potenciálně přidávající bity efektivní bezpečnosti. Kvantitativní bezpečnostní zisk a implikace pro konvergenci zůstávají otevřené.
+\end{openproblem}
+
+\begin{openproblem}[Posílená NIST evaluace při $10^6$ klíčů]\label{prob:nist-strong}
+Současná NIST evaluace používá $N = 1000$ klíčů ($\approx 2{,}56 \cdot 10^5$ bitů). Posílená evaluace při $N \geq 10^6$ klíčů s analýzou druhého řádu ($100$ nezávislých běhů sady, chi-square uniformity check na výsledné distribuci $p$-hodnot) by poskytla tvrzení o statistické uniformitě s vyšší konfidencí. Je to proveditelné v rámci již používaného empirického frameworku.
+\end{openproblem}
+
+\begin{openproblem}[Útočník založený na ML]\label{prob:ml}
+Natrénovat hluboký neuronový model na mapování (transkripce $\to$ bity $K^*$); určit, zda lepší než $50\%$ baseline. Pokud ano, kvantifikovat únik a identifikovat, které transkripční prvky nesou signál. Tato třída útočníků je strukturálně odlišná od čtyř tříd B.1--B.4 evaluovaných zde a není adresována současnými empirickými hranicemi.
+\end{openproblem}
+
+\begin{openproblem}[Optimalizace bandwidth]\label{prob:bandwidth}
+Reference vyžaduje $\sim 20$ KB na kolo, dominováno $N$ per-vector hash prefixy na A$\to$B kanálu. Mohou zlepšení hash encoding (Bloom filtry, chunking, amortizace přes kola) snížit per-round bandwidth pod $5$ KB při zachování bezpečnostních vlastností? Toto je primárně inženýrská optimalizace, ale s potenciálním dopadem na životaschopnost nasazení.
+\end{openproblem}
+
+\begin{openproblem}[Stress test obrany proti zaplavení při velkých poolech]\label{prob:flood-stress}
+Současná empirická baterie pasivních útočníků (Sekce~\ref{sec:empirical-attackers}) evaluuje B.1--B.4 při $P = 10^7$ a B.7 při $P \in \{10^6, 10^7\}$. Při $P = 10^7$ je očekávaný počet stage-b survivorů na kolo $E = P \cdot N \cdot M / 2^{8(h_{AB} + h_{BA})} \approx 4{,}5 \cdot 10^{-6}$, takže pozorovaný výsledek $0/300$ napříč všemi třídami je strukturálně konzistentní s tvrzením ,,nikdo nedošel ani do stage-b`` --- nikoli s tvrzením ,,stage-b filter zafungoval pod realistickým zaplavením``. Pro empirickou validaci AES-CBC NoPadding obrany proti zaplavení (Sekce~\ref{sec:flooding}) pod skutečnou zátěží je třeba evaluaci pustit při $P \geq 10^{10}$.
+
+\textbf{Predikce při $P = 10^{12}$ na referenci v2:} $\approx 22$ stage-b survivorů na sezení (medián 49 kol), $\approx 1{,}2 \cdot 10^{-18}$ stage-c survivorů, $\approx 0$ obnovení $K^*$. Měření by validovalo predikované scaling $E_{\text{stage-b}} \propto P$ a, kritičtěji, ověřilo, že ani desítky stage-b kandidátů na sezení nepřekonají $h_P$ filtr (nebo jen jako Poissonův šum) --- což je jádro tvrzení o nerozlišitelné kandidátní množině velikosti $2^{8L - \lambda_{\text{preimage}}}$.
+
+\textbf{Náklady.} Paměť: konstantní (pool se streamuje, drží se jen $\sim$ KB transkriptových hashů); 16 GB GPU RAM dostatečně. Compute: B.2 lineárně škáluje s $P$, takže $P = 10^{12}$ přes 300 sezení je při $\approx 57$ s/sezení na 22-jádrovém CPU s SHA-NI prohibitivní ($\approx 900$ dní). GPU SHA-256 (RTX 4060: $\sim 5$ GH/s, RTX 4090: $\sim 10$ GH/s) redukuje plný 300-sezení batch na $8$--$16$ hodin. B.4 (AES-Oracle) má při této velikosti řádově horší propustnost na GPU než B.2 (AES decrypt vs.\ čisté SHA), a vyžaduje buď redukci na $N = 30$ sezení, nebo redukci $P$ na $10^{10}$.
+
+\textbf{Plán nasazení.} Dedikovaná RTX 4060 16~GB k dispozici cca 2026-05-13. První běh: B.2 @ $P \in \{10^{10}, 10^{12}\}$ × 300 sezení (1--2 dny). Druhý běh: B.4 @ $P = 10^{10}$ × 30 sezení. Cíl: rozšířit Tabulku~\ref{tab:attackers} o flood-stress sloupec a porovnat naměřené stage-b/stage-c hity s analytickou predikcí. Negativní výsledek (zero stage-c recovery při změřených desítkách stage-b) by posílil empirický argument pro flooding obranu nad současnou ,,nedošli ani do stage-b`` validaci.
+\end{openproblem}
+
+\begin{openproblem}[Resource-constrained parametrická rodina (IoT)]\label{prob:iot}
+Empirická kalibrace a validace low-resource profilu s $L = 16$, $N \sim 1024$ a hashovými prefixy škálovanými na IoT omezení paměti/bandwidth. Preliminární empirická data pro $L = 16, N = 1024, h_{AB} = 4, h_{BA} = 2, h_P = 4$ jsou uvedena v Dodatku~\ref{app:preliminary}. Velikost nerozlišitelné množiny při těchto parametrech je pouze $2^{48}$ --- v dosahu brute-force enumerace na moderních GPU --- což umisťuje IoT blízko hranice Break-Demo a vyžaduje explicitní production-vs-research pozicování. Plná kalibrace podle tří-rationale designu (Sekce~\ref{sec:rationale}) a následná útočnická evaluace jsou otevřené.
+\end{openproblem}
+
+\begin{openproblem}[Postkvantová 128-bit parametrická rodina (PQ128)]\label{prob:pq128}
+Návrh a empirická validace profilu dosahujícího $128$-bitové postkvantové bezpečnosti za Groverova zrychlení. Klíčová designová otázka je, zda PQ bezpečnost primárně pochází z $\lambda_\text{preimage} \geq 256$ (bandwidth-náročná, konzervativní cesta), nebo ze strukturálních argumentů kombinujících velikost nerozlišitelné množiny, kombinatorickou password množinu a Stat korelaci (elegantní, ale vyžaduje řešení Otevřeného problému~\ref{prob:dynamic-formal}). Preliminární data pro paranoidní parametrovou sadu ($L = 64, N = 8192, h_{AB} = 16, h_{BA} = 8, h_P = 8$) jsou uvedena v Dodatku~\ref{app:preliminary}; principiální re-kalibrace je otevřená.
+\end{openproblem}
+
+\begin{openproblem}[Break-Demo parametrická podrodina]\label{prob:breakdemo}
+Systematická explorace parametrické podrodiny, kde jsou $\lambda_\text{preimage}$ a velikost nerozlišitelné množiny záměrně sníženy na útočně-demonstrovatelné úrovně, poskytující pedagogickou instanci pro výuku metodologie útoků. Navrhované parametrové rozsahy: $L \in \{8, 12, 16\}$, $N \in \{256, 384, 512\}$, $h_{AB} = 3$, $h_{BA} = 2$, $h_P \in \{3, 4\}$, $M \in \{4, 6, 8\}$. Extrém ($L = 8, N = 256, h_{AB} = 3, h_{BA} = 2, h_P = 3$) dává $\lambda_\text{preimage} = 64$ a nerozlišitelnou množinu $2^{0} = 1$. Empirický pilot při sub-extrémním $\lambda_\text{preimage} = 56$ ($h_{BA} = 1$, deterministická aktualizace) pod baterií pěti tříd útočníků (Sekce~\ref{sec:empirical-attackers}) vrátil $0/300$ napříč všemi třídami; dual-mode B.7 zkoumání ukazuje, že kaskádový filtr $h_{AB}+h_{BA}+h_P$ blokuje Stat-prior enumeraci v obou směrech na různých stage, naznačujíc, že otevřená otázka je dosažitelná pouze při nižším $\lambda$ nebo s útočnickými třídami mimo cascade-filter framework. Explicitní research-only pozicování; nedoporučeno pro produkční nasazení.
+\end{openproblem}
+
+\section{Závěr}\label{sec:conclusion}
+
+Představili jsme Grata Cascade, konstrukci průběžné domluvy klíče, jejíž bezpečnost spočívá na zásadní asymetrické hranici znalostí ze zobecněného problému narozenin. Statická asymetrie $R \approx n/k$ poskytuje pravděpodobnostní dolní mez na výhodu legitimních stran nad útočníkem; tato statická mez je transformována na dynamický, konvergentní systém čtyřmi designovými rozhodnutími: deterministické adresování přes hash, drift přes náhodný vektor, aktualizace vektorů s TPM-inspirovanou adaptační fází a AES derivace klíče z vektorů průniku.
+
+Empirická evaluace na referenci v2 ($L = 32$, $N = 4096$, $h_{AB} = 5$, $h_{BA} = 2$, $h_P = 8$, $M = 8$, $s = 4$, $\lambda_\text{preimage} = 120$ bitů, viz Sekce~\ref{sec:empirical}) demonstruje: (i) $100\%$ Final-hit a $99{,}992\%$ keys-match přes $5 \times 10^4$ běhů (Clopper--Pearsonova horní $95\%$ CI na míru kombinovaného selhání $2{,}05 \cdot 10^{-4}$); (ii) statistickou uniformitu výstupních klíčů pod NIST SP 800-22 ($12/12$ PASS přes $1000$ klíčů); (iii) nulovou útočnickou úspěšnost přes pět tříd pasivních útočníků ($N = 300$ transkriptů na třídu, celkem $\sim 10^{11}$ SHA-256 vyhodnocení), s $95\%$ Clopper--Pearsonovou horní mezí $1{,}22\%$ na třídu; (iv) žádnou měřitelnou diskriminační sílu pro B.4 AES-Oracle útočníka přes $2{,}05 \cdot 10^{10}$ dotazů (Cohenovo $d = 0{,}009$), podporujíc strukturální argument, že AES derivace klíče (nikoli hustota poolu jako taková) je dominantní obranou proti této třídě útoku; (v) kalibrované operační rozsahy pro parametry relevantní pro bezpečnost $p_\text{upd}$, $s$ a $\theta_\text{cand}$ pokud zapnut. Práh odmítnutí kandidátů $\theta_\text{cand}$ je vystaven jako konfigurovatelná Tier-3 obrana a defaultně vypnut v referenci v2; jeho zpřísnění na v1 kalibrované optimum ($\theta_\text{cand} = -95$) je doporučeno pro nasazení pod zvýšenými hrozbami.
+
+Ablace $h_{AB} = 6$ při referenční škále (Sekce~\ref{sec:empirical-habresidual}) přes $5 \times 10^4$ běhů vrátila $0/50\,000$ KM divergencí, s Clopper--Pearsonovým horním $95\%$ CI $7{,}38 \cdot 10^{-5}$ — pod baseline reference v2 $8{,}0 \cdot 10^{-5}$. Toto empiricky validuje predikovanou eliminaci reziduálních divergencí ($+1$ byte $h_{AB}$ $\to$ $\sim 256\times$ redukce míry) a pozicuje \texttt{reference\_h\_AB6} (s $\lambda_\text{preimage} = 128$ bitů) jako kandidáta na v3 reference profil, odložený na deployment review. Distribuce iterací při $h_{AB} = 6$ je statisticky identická s reference v2; trade-off na bandwidth je $+4$ KB na kolo při $N = 4096$ pouze na A$\to$B kanálu.
+
+Specifikovány jsou tři produkční parametrické profily (Mobile, Reference, HighSec Classical), re-kalibrované podle designového rationale; baseline empirická validace (Dodatek~\ref{app:preliminary}) stanovuje fundamentální tvrzení, která se konzervativně přenášejí na produkční hodnoty. Tři dodatečné výzkumné parametrické rodiny (IoT, PQ128, Break-Demo) jsou formulovány jako otevřené problémy~\ref{prob:iot}, \ref{prob:pq128} a \ref{prob:breakdemo} pro budoucí empirickou exploraci. Asymetrie $\log_2 R$ napříč produkční rodinou se pohybuje od $243$ do $246$ bitů, kvantifikujíc statický fundament bezpečnosti konstrukce; výzkumné rodiny rozšiřují tento rozsah jak dolů (Break-Demo, pedagogická), tak nahoru (PQ128, paranoidní-$\lambda_\text{preimage}$).
+
+Grata Cascade je pozicována jako kandidát na \emph{třetí nezávislou vrstvu} v hybridní jednorázové domluvě klíče typu X-Wing (Sekce~\ref{sec:comparison}). Její bezpečnost nezávisí ani na číselně-teoretických předpokladech (prolomených Shorem), ani na lattice předpokladech (jejichž postkvantová bezpečnost zůstává aktivní výzkumnou otázkou), ale pouze na odolnosti hashové funkce proti preimage v kombinaci se statistickým driftem --- přičemž odolnost SHA-256 vůči preimage si pod Groverovým zpomalením zachovává $2^{128}$-bitovou postkvantovou bezpečnost. Konstrukce je vhodná jako třetí strukturálně nezávislá vrstva v hybridních PQ KE deploymentech (např.\ X25519 $\oplus$ ML-KEM-768 $\oplus$ Grata Cascade) za cenu $\sim 1$ MB navýšení per-session objemu dat.
+
+Cesta vpřed je dominována dvěma centrálními otevřenými problémy. Otevřený problém~\ref{prob:dynamic-formal} (formalizace zachování dynamické asymetrie přes iterativní kola) by převedl empirické bezpečnostní tvrzení této práce na formální kryptografické garance pro single-session bezpečnost $K^*$. Otevřený problém~\ref{prob:cka-extension} (rozšíření na CKA primitivu) je dlouhodobý cíl: stavěje na Path A redukci by Grata Cascade získala plné FS/PCS záruky a stala se prvním hash-based CKA konstrukcí, použitelnou jako třetí nezávislá CKA vrstva v Triple-Ratchet-style messaging stacku. Zbývající otevřené problémy adresují parametrické rozšíření, agregaci slabých signálů, dynamickou derivaci parametrů, ML útočníky, optimalizaci objemu dat a flooding stress test (\texttt{prob:flood-stress}) --- všechny rozšiřující empirický a teoretický základ zde stanovený. Otázka $h_{AB}$ reziduálních divergencí, uvedená jako otevřený problém v dřívějších verzích paperu, je výše uvedeným ablačním výsledkem v8 uzavřena.
+
+\medskip
+\noindent\textit{Problém narozenin popisuje statický stav. Grata Cascade na něm staví dynamický jednorázový systém. Rozšíření na continuous variant je otevřené (Otev.~\ref{prob:cka-extension}).}
+
+\appendix
+
+\section{Volitelné obrany pro nasazení bez důvěryhodného transportu}\label{app:optional-defenses}
+
+Pro nasazení postrádající autentizovaný transport mohou být ke Grata Cascade přidány tři volitelné obranné mechanismy na úrovni protokolu. Nejsou součástí referenčního protokolu, ale jsou zde načrtnuty pro úplnost.
+
+\paragraph{(A) Statistická detekce manipulovaného $R_t$.} Obě strany udržují klouzavé okno přijímaných $R_t$ vektorů a periodicky aplikují chi-square goodness-of-fit test proti rovnoměrné distribuci. Významná odchylka spouští terminaci protokolu. Omezení: cold-start zranitelnost během prvních $W$ kol; adaptivní útočníci mohou posílat statisticky validní, ale strukturálně cílené $R_t$.
+
+\paragraph{(B) Deterministické $R_t$ ze sdíleného stavu.} $R_t$ je odvozeno jako $R_t = H(\text{transcript}_{t-1} \Vert \sigma_t^{\text{shared}} \Vert t)$, s oběma stranami počítajícími nezávisle. Útočník nemůže modifikovat $R_t$ bez sdíleného stavu. Omezení: bootstrap problém (první kolo nemá sdílený stav); vyžaduje jednoznačný sdílený stav, konfliktující s flooding chováním ze Sekce~\ref{sec:aes}.
+
+\paragraph{(C) Veřejný filtrovaný $R$-pool.} Veřejně auditovatelná množina $\mathcal{R} = \{r_1, \ldots, r_K\}$ s $K \approx 10^6$ předem filtrovanými vektory. B náhodně vybírá index $i_t$ a posílá ho; A získává $r_{i_t}$ z lokální kopie. Útočník nemůže modifikovat obsah vektorů; zbytková manipulace indexu poskytuje $\log_2 K \approx 20$ bitů na kolo. Výhody: auditovatelnost, kvalitativní garance. Omezení: operační nárok distribuce $\mathcal{R}$ a integrity.
+
+Každá varianta má jiné trade-offy; integrátoři nasazení je mohou kombinovat podle konkrétních modelů útočníka.
+
+\section{Podrobné výsledky NIST SP 800-22}\label{app:nist}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrl}
+\toprule
+Test & $p$-hodnota & Verdikt \\
+\midrule
+Frequency (Monobit) & 0{,}7911 & PASS \\
+Block Frequency ($M=128$) & 0{,}0931 & PASS \\
+Runs & 0{,}3654 & PASS \\
+Longest Run of Ones in a Block & 0{,}9980 & PASS \\
+Binary Matrix Rank ($32 \times 32$) & 0{,}9041 & PASS \\
+Discrete Fourier Transform (Spectral) & 0{,}3742 & PASS \\
+Non-overlapping Template ($m=9$) & 0{,}6070 & PASS \\
+Approximate Entropy ($m=2$) & 0{,}2438 & PASS \\
+Cumulative Sums (forward) & 0{,}9654 & PASS \\
+Cumulative Sums (reverse) & 0{,}7821 & PASS \\
+Serial P1 ($m=3$) & 0{,}2444 & PASS \\
+Serial P2 ($m=3$) & 0{,}1028 & PASS \\
+\bottomrule
+\end{tabular}
+\caption{Výsledky NIST SP 800-22 na streamu $256\,000$ bitů z $1000$ nezávislých běhů.}
+\label{tab:nist}
+\end{table}
+
+\section{Preliminární evaluace budoucích parametrických rodin}\label{app:preliminary}
+
+Tento dodatek uvádí empirická data pro parametrické rodiny, které jsou formulovány jako otevřené problémy~\ref{prob:iot} a~\ref{prob:pq128}, nikoli jako produkční profily, společně s původními (před-rekalibračními) empirickými daty pro profil HighSec Classical. Tato data představují preliminární fundamentální validaci; plná kalibrace podle designového rationale ze Sekce~\ref{sec:rationale} a navazující útočnická evaluace zůstávají otevřené.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrrrrl}
+\toprule
+Rodina & $L$ & $N$ & $h_{AB}$ & $h_{BA}$ & $h_P$ & $\lambda_\text{preimage}$ & Nerozliš. množ. & Stav \\
+\midrule
+IoT (preliminární) & 16 & 1024 & 4 & 2 & 4 & 80 & $2^{48}$ & Otevřený problém~\ref{prob:iot} \\
+PQ128 (preliminární) & 64 & 8192 & 16 & 8 & 8 & 256 & $2^{256}$ & Otevřený problém~\ref{prob:pq128} \\
+\bottomrule
+\end{tabular}
+\caption{Preliminární parametrové hodnoty pro výzkumné parametrické rodiny. Jde o historické parametry, za kterých byla níže uvedená data sbírána; nejsou doporučovanými produkčními hodnotami a podléhají re-kalibraci podle Sekce~\ref{sec:rationale}.}
+\label{tab:profiles-baseline}
+\end{table}
+
+\paragraph{IoT preliminární validace (100 klíčů).}
+$200/200$ FH, $200/200$ KM, iter(medián) $= 68$. NIST $11/12$ PASS, $1$ N/A (Binary Matrix Rank přeskočen kvůli nedostatečné délce vstupu).
+
+\paragraph{PQ128 preliminární validace (100 klíčů).}
+$50/50$ FH, $50/50$ KM, iter(medián) $= 69$. NIST $10/12$ PASS, $1$ N/A, $1$ marginální FAIL (Block Frequency, $p = 0{,}0035$) disambiguováno jako šum re-runem s $500$ klíči ($12/12$ PASS, Block Frequency $p = 0{,}193$).
+
+\paragraph{HighSec Classical preliminární validace (100 klíčů).}
+Původní parametry $L = 32, N = 8192, h_{AB} = 8, h_{BA} = 3, h_P = 5$ daly $200/200$ FH, $200/200$ KM, iter(medián) $= 89$. NIST $11/12$ PASS, $1$ N/A. Poznámka: HighSec Classical jako produkční profil v Tabulce~\ref{tab:profiles} používá re-kalibrované hodnoty $h_{AB} = 6, h_{BA} = 3, h_P = 6$ podle designového rationale; empirická re-validace je plánovaná (F16).
+
+\paragraph{Interpretace.} Tyto výsledky stanovují, že konstrukce Grata Cascade dosahuje konvergence a statistické uniformity napříč rozmanitými parametrovými nastaveními pokrývajícími $L \in \{16, 32, 64\}$ a $N \in \{1024, 8192\}$ s $\lambda_\text{preimage} \in [80, 256]$ bity. Fundamentální tvrzení konstrukce (konvergence, NIST uniformita, odolnost proti pasivním útočníkům) jsou robustní napříč tímto parametrovým rozsahem. Plná kalibrace budoucích parametrických rodin podle designového rationale Sekce~\ref{sec:rationale}, včetně analýzy velikosti nerozlišitelné množiny a per-family útočnické evaluace (B.1--B.4), je budoucí práce.
+
+\bigskip
+\bibliographystyle{plain}
+
+\begin{thebibliography}{99}
+
+\bibitem{ACD19} J.~Alwen, S.~Coretti, Y.~Dodis. \emph{The Double Ratchet: Security Notions, Proofs, and Modularization for the Signal Protocol}. EUROCRYPT 2019.
+
+\bibitem{KKK2002} I.~Kanter, W.~Kinzel, E.~Kanter. \emph{Secure exchange of information by synchronization of neural networks}. Europhysics Letters 57(1):141--147, 2002.
+
+\bibitem{KMS2003} A.~Klimov, A.~Mityagin, A.~Shamir. \emph{Analysis of neural cryptography}. ASIACRYPT 2002.
+
+\bibitem{Merkle1978} R.~C.~Merkle. \emph{Secure communications over insecure channels}. Communications of the ACM 21(4):294--299, 1978.
+
+\bibitem{IR1989} R.~Impagliazzo, S.~Rudich. \emph{Limits on the provable consequences of one-way permutations}. STOC 1989.
+
+\bibitem{SPQR2025} Signal Foundation et~al. \emph{Sparse Post-Quantum Ratchet (SPQR)}. EUROCRYPT 2025, USENIX Security 2025.
+
+\bibitem{PQXDH} Signal Foundation. \emph{The PQXDH Key Agreement Protocol}. Specification, 2024.
+
+\bibitem{DR2017} K.~Cohn-Gordon, C.~Cremers, B.~Dowling, L.~Garratt, D.~Stebila. \emph{A Formal Security Analysis of the Signal Messaging Protocol}. EuroS\&P 2017.
+
+\bibitem{JW1999} A.~Juels, M.~Wattenberg. \emph{A fuzzy commitment scheme}. CCS 1999.
+
+\bibitem{Dodis2004} Y.~Dodis, L.~Reyzin, A.~Smith. \emph{Fuzzy extractors}. EUROCRYPT 2004.
+
+\bibitem{NIST800-22} L.~E.~Bassham et~al. \emph{A Statistical Test Suite for Random and Pseudorandom Number Generators for Cryptographic Applications}. NIST Special Publication 800-22 Revision 1a, 2010.
+
+\bibitem{xwing} D.~Connolly, P.~Schwabe, B.~Westerbaan. \emph{X-Wing: The Hybrid KEM You've Been Looking For}. Cryptology ePrint Archive, Paper 2024/039, 2024. \url{https://eprint.iacr.org/2024/039}.
+
+\bibitem{SPHINCS+} National Institute of Standards and Technology. \emph{Stateless Hash-Based Digital Signature Standard}. FIPS 205, August 2024.
+
+\bibitem{F4Calibration} R.~Jaru\v{s}ek (Grata Luma s.r.o.). \emph{F4 probability-threshold calibration sweeps for Grata Cascade reference v1}. Internal report, 2026. \url{https://github.com/GrataLuma/Cascade/blob/main/EmpiricalEvaluation/reports/probability_thresholds_calibration.md}.
+
+\end{thebibliography}
+
+\end{document}

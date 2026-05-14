@@ -1,0 +1,5 @@
+# Linux deployment artefakty — vynucená LF, jinak by bash šel do háje
+# na CRLF shebangu a Caddy / systemd by stěží parsovaly Windows konce řádků.
+deploy/*.sh             text eol=lf
+deploy/*.service        text eol=lf
+deploy/Caddyfile*       text eol=lf

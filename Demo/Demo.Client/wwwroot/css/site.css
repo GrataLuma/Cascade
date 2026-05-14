@@ -1,0 +1,673 @@
+/* Grata Cascade — paper-companion academic styling.
+ * Inspirace: Distill.pub, IACR ePrint, IETF drafts.
+ * Override Bootstrap 5 defaults: serif body, neutral palette, low chrome,
+ * narrow content column, generous whitespace.
+ *
+ * Načteno PO Bootstrap CSS v index.html — kaskáda přebíjí jeho defaulty.
+ */
+
+/* ── Design tokens ──────────────────────────────────────────────────── */
+:root {
+    /* Palette — single accent ink, jinak grayscale. */
+    --gc-ink:        #1a1a1a;
+    --gc-ink-muted: #555;
+    --gc-rule:       #d4d4d4;
+    --gc-bg:         #fbfaf7;          /* warm off-white, paper-like */
+    --gc-bg-card:    #ffffff;
+    --gc-accent:     #1f4e79;          /* muted academic blue */
+    --gc-accent-faint: #e8eef5;
+    --gc-success:    #2d6a4f;          /* deep forest green pro Final */
+    --gc-warning:    #9a6500;
+    --gc-danger:     #842029;
+
+    /* Typography. */
+    --gc-serif:      'Charter', 'Iowan Old Style', 'Palatino Linotype',
+                     'Palatino', 'URW Palladio L', Georgia, 'Times New Roman', serif;
+    --gc-sans:       system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                     Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --gc-mono:       'JetBrains Mono', 'IBM Plex Mono', Consolas, 'SF Mono',
+                     'Courier New', monospace;
+
+    /* Spacing scale (paper feel = generous). */
+    --gc-content-max: 720px;
+    --gc-wide-max:    1080px;
+}
+
+/* ── Body / typography baseline ─────────────────────────────────────── */
+html, body {
+    background: var(--gc-bg);
+    color: var(--gc-ink);
+    font-family: var(--gc-serif);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--gc-sans);
+    font-weight: 600;
+    color: var(--gc-ink);
+    letter-spacing: -0.01em;
+}
+
+/* Blazor <FocusOnNavigate Selector="h1"> programmaticky fokusuje h1
+   po každé navigaci kvůli a11y (screen reader landmark) — nastavuje
+   tabindex="-1" + .focus(). Browser pak ale přidá focus outline,
+   vizuálně rušivý rámeček.
+   `:not(:focus-visible)` heuristika je nespolehlivá (Chromium někdy
+   označí navigation-induced focus jako visible). Spolehlivější:
+   cílit přímo na tabindex="-1" h1 (FocusOnNavigate ho tam vždy
+   nastaví) — keyboard tab navigation h1 nepoužívá. */
+h1[tabindex="-1"]:focus,
+h1:focus:not(:focus-visible) {
+    outline: none;
+    box-shadow: none;
+}
+
+h1 { font-size: 2rem; line-height: 1.2; margin-top: 0; margin-bottom: 1rem; }
+h2 { font-size: 1.45rem; line-height: 1.3; margin-top: 2rem; margin-bottom: 0.75rem; }
+h3 { font-size: 1.15rem; line-height: 1.4; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+h5 { font-size: 1.05rem; font-weight: 600; }
+
+p { margin-bottom: 1rem; }
+small, .small { color: var(--gc-ink-muted); }
+
+a {
+    color: var(--gc-accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+    transition: color 150ms ease;
+}
+a:hover { color: var(--gc-ink); }
+
+code, pre, .text-monospace {
+    font-family: var(--gc-mono);
+    font-size: 0.9em;
+}
+
+/* ── Layout containers ──────────────────────────────────────────────── */
+.gc-narrow {
+    max-width: var(--gc-content-max);
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.gc-wide {
+    max-width: var(--gc-wide-max);
+    margin-left: auto;
+    margin-right: auto;
+}
+
+main.container {
+    max-width: var(--gc-wide-max);
+}
+
+/* ── Public testbed banner (jen na live demu, ne na localhost) ──────── */
+.gc-testbed-banner {
+    background: var(--gc-accent-faint);
+    border-bottom: 1px solid var(--gc-rule);
+    color: var(--gc-ink);
+    font-family: var(--gc-sans);
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.gc-testbed-banner-inner {
+    max-width: var(--gc-wide-max);
+    margin: 0 auto;
+    padding: 0.5rem 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.75rem;
+}
+
+.gc-testbed-badge {
+    background: var(--gc-accent);
+    color: #fff;
+    padding: 0.1rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
+.gc-testbed-text {
+    color: var(--gc-ink-muted);
+}
+
+/* ── Header (project nav) ───────────────────────────────────────────── */
+.gc-header {
+    border-bottom: 1px solid var(--gc-rule);
+    background: var(--gc-bg);
+    padding: 1rem 0;
+    margin-bottom: 2rem;
+}
+
+.gc-header-inner {
+    max-width: var(--gc-wide-max);
+    margin: 0 auto;
+    padding: 0 1.5rem;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.gc-brand {
+    font-family: var(--gc-sans);
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--gc-ink);
+    text-decoration: none;
+}
+
+.gc-brand:hover { color: var(--gc-accent); }
+
+.gc-brand-suffix {
+    font-weight: 400;
+    color: var(--gc-ink-muted);
+    margin-left: 0.4rem;
+    font-size: 0.95rem;
+}
+
+.gc-nav {
+    display: flex;
+    gap: 1.25rem;
+    font-family: var(--gc-sans);
+    font-size: 0.95rem;
+}
+
+.gc-nav a {
+    color: var(--gc-ink-muted);
+    text-decoration: none;
+}
+
+.gc-nav a:hover, .gc-nav a.active {
+    color: var(--gc-accent);
+    text-decoration: underline;
+    text-underline-offset: 4px;
+}
+
+/* Lang toggle button (CS / EN) — v stylu odkazů, ale clickable. */
+.gc-lang-toggle {
+    background: none;
+    border: 1px solid var(--gc-rule);
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    font-family: var(--gc-sans);
+    font-size: 0.85rem;
+    color: var(--gc-ink-muted);
+    cursor: pointer;
+    transition: border-color 120ms ease;
+}
+
+.gc-lang-toggle:hover {
+    border-color: var(--gc-accent);
+}
+
+.gc-lang-toggle .active {
+    color: var(--gc-accent);
+    font-weight: 600;
+}
+
+.gc-lang-sep {
+    margin: 0 0.25rem;
+    color: var(--gc-rule);
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────── */
+.gc-footer {
+    border-top: 1px solid var(--gc-rule);
+    margin-top: 4rem;
+    padding: 1.5rem 0;
+    color: var(--gc-ink-muted);
+    font-size: 0.875rem;
+    font-family: var(--gc-sans);
+}
+
+.gc-footer-inner {
+    max-width: var(--gc-wide-max);
+    margin: 0 auto;
+    padding: 0 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+/* ── Bootstrap overrides — buttons ──────────────────────────────────── */
+.btn {
+    font-family: var(--gc-sans);
+    font-weight: 500;
+    border-radius: 3px;
+    transition: all 120ms ease;
+}
+
+.btn-primary {
+    background-color: var(--gc-accent);
+    border-color: var(--gc-accent);
+}
+
+.btn-primary:hover, .btn-primary:focus {
+    background-color: #163e62;
+    border-color: #163e62;
+}
+
+.btn-success {
+    background-color: var(--gc-success);
+    border-color: var(--gc-success);
+}
+
+.btn-outline-primary {
+    color: var(--gc-accent);
+    border-color: var(--gc-accent);
+}
+
+.btn-outline-primary:hover {
+    background-color: var(--gc-accent);
+    border-color: var(--gc-accent);
+}
+
+.btn-outline-secondary {
+    color: var(--gc-ink-muted);
+    border-color: var(--gc-rule);
+}
+
+.btn-outline-secondary:hover {
+    background-color: var(--gc-ink);
+    border-color: var(--gc-ink);
+    color: var(--gc-bg);
+}
+
+.btn-outline-danger {
+    color: var(--gc-danger);
+    border-color: var(--gc-danger);
+}
+
+.btn-link {
+    color: var(--gc-accent);
+}
+
+/* CTA — landing "Spustit demo". */
+.gc-cta {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    font-family: var(--gc-sans);
+    font-size: 1rem;
+    font-weight: 500;
+    background: var(--gc-ink);
+    color: var(--gc-bg) !important;
+    text-decoration: none;
+    border-radius: 3px;
+    transition: background 150ms ease;
+}
+
+.gc-cta:hover {
+    background: var(--gc-accent);
+    color: var(--gc-bg) !important;
+}
+
+/* ── Bootstrap overrides — cards ────────────────────────────────────── */
+.card {
+    background: var(--gc-bg-card);
+    border: 1px solid var(--gc-rule);
+    border-radius: 4px;
+    box-shadow: none;
+}
+
+.card-header {
+    background: var(--gc-bg);
+    border-bottom: 1px solid var(--gc-rule);
+    font-family: var(--gc-sans);
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.card-header.bg-primary, .card-header.bg-success {
+    color: var(--gc-bg-card);
+}
+
+.card-header.bg-primary { background: var(--gc-accent) !important; }
+.card-header.bg-success { background: var(--gc-success) !important; }
+.card-header.bg-light    { background: var(--gc-bg) !important; color: var(--gc-ink); }
+
+.card-body dt {
+    font-family: var(--gc-sans);
+    font-weight: 500;
+    color: var(--gc-ink-muted);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.card-body dd {
+    font-family: var(--gc-mono);
+    margin-bottom: 0.5rem;
+    color: var(--gc-ink);
+}
+
+/* ── Alerts ─────────────────────────────────────────────────────────── */
+.alert {
+    border-radius: 4px;
+    border-width: 1px;
+    border-left-width: 3px;
+    background: var(--gc-bg-card);
+}
+
+.alert-success { border-left-color: var(--gc-success); color: var(--gc-ink); }
+.alert-warning { border-left-color: var(--gc-warning); color: var(--gc-ink); }
+.alert-danger  { border-left-color: var(--gc-danger);  color: var(--gc-ink); }
+.alert-info    { border-left-color: var(--gc-accent);  color: var(--gc-ink); }
+.alert-primary { border-left-color: var(--gc-accent);  color: var(--gc-ink); }
+.alert-secondary { border-left-color: var(--gc-rule);  color: var(--gc-ink); }
+
+/* ── Badges ─────────────────────────────────────────────────────────── */
+.badge {
+    font-family: var(--gc-sans);
+    font-weight: 500;
+    padding: 0.35em 0.6em;
+    border-radius: 3px;
+}
+
+.badge.bg-primary   { background-color: var(--gc-accent) !important; }
+.badge.bg-success   { background-color: var(--gc-success) !important; }
+.badge.bg-secondary { background-color: var(--gc-ink-muted) !important; }
+.badge.bg-info      { background-color: var(--gc-accent-faint) !important;
+                      color: var(--gc-accent) !important; }
+.badge.bg-warning   { background-color: #fdf2cd !important;
+                      color: var(--gc-warning) !important; }
+
+/* ── Progress bar ───────────────────────────────────────────────────── */
+.progress {
+    background: var(--gc-bg);
+    border: 1px solid var(--gc-rule);
+    border-radius: 3px;
+    height: 16px !important;
+    font-family: var(--gc-mono);
+    font-size: 0.75rem;
+}
+
+.progress-bar.bg-success { background-color: var(--gc-success) !important; }
+.progress-bar.bg-warning { background-color: var(--gc-warning) !important; color: var(--gc-bg); }
+
+/* ── List groups (lobby seznam) ─────────────────────────────────────── */
+.list-group-item {
+    border-color: var(--gc-rule);
+    background: var(--gc-bg-card);
+}
+
+/* ── Code / hashes ──────────────────────────────────────────────────── */
+pre, code {
+    color: var(--gc-ink);
+}
+
+pre {
+    background: var(--gc-bg);
+    border: 1px solid var(--gc-rule);
+    padding: 1rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+/* ── Math-style figure caption ──────────────────────────────────────── */
+.gc-caption {
+    font-family: var(--gc-sans);
+    font-size: 0.85rem;
+    color: var(--gc-ink-muted);
+    text-align: center;
+    margin-top: 0.5rem;
+    font-style: italic;
+}
+
+/* ── Resource list (landing "Zdroje" sekce) ─────────────────────────── */
+.gc-resource-list {
+    list-style: none;
+    padding-left: 0;
+    font-family: var(--gc-sans);
+}
+
+.gc-resource-list li {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--gc-rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+}
+
+.gc-resource-list li:last-child { border-bottom: none; }
+
+.gc-resource-label {
+    font-weight: 500;
+    color: var(--gc-ink);
+}
+
+.gc-resource-meta {
+    color: var(--gc-ink-muted);
+    font-size: 0.85rem;
+}
+
+/* ── Disclaimer card (paper §1.5 prominent) ─────────────────────────── */
+.gc-disclaimer {
+    border: 1px solid var(--gc-warning);
+    border-left-width: 4px;
+    background: #fffbeb;
+    padding: 1rem 1.25rem;
+    border-radius: 4px;
+    margin: 1.5rem 0;
+    font-size: 0.95rem;
+}
+
+.gc-disclaimer-title {
+    font-family: var(--gc-sans);
+    font-weight: 600;
+    color: var(--gc-warning);
+    margin-bottom: 0.4rem;
+}
+
+/* ── Drobnější polish ───────────────────────────────────────────────── */
+hr { border-color: var(--gc-rule); opacity: 1; }
+
+table {
+    font-size: 0.95rem;
+}
+
+table thead th {
+    font-family: var(--gc-sans);
+    font-weight: 600;
+    border-bottom: 2px solid var(--gc-ink) !important;
+}
+
+/* ── Personal accent color (--gc-own-color) ─────────────────────────── */
+/* CSS custom properties nastavované inline na .gc-personalized wrapperu
+   z Driver.OwnHandle. Vlastní barva uživatele se promítá do status
+   badge, progress baru a LOCAL panel headeru. PEER panel je neutrální
+   (Bootstrap default), peer's barva žije jen ve swatchi vedle handle
+   name — záměr: "na jedné stránce vidím jen svoji barvu". */
+
+.gc-bg-own {
+    background-color: var(--gc-own-color, var(--gc-accent)) !important;
+    color: var(--gc-own-color-on, #fff) !important;
+    border-color: var(--gc-own-color, var(--gc-accent)) !important;
+}
+
+.gc-border-own {
+    border-color: var(--gc-own-color, var(--gc-rule)) !important;
+}
+
+/* Progress bar fill: rebindne Bootstrap CSS custom property
+   --bs-progress-bar-bg na vlastní barvu. Bootstrap používá tuto
+   var v .progress-bar { background-color: var(--bs-progress-bar-bg); },
+   takže tohle propíše bez specificity bojů. Analogicky barva textu
+   uvnitř baru (Round number).
+   Aplikuje se POUZE uvnitř .gc-personalized wrapperu. */
+.gc-personalized .progress {
+    --bs-progress-bar-bg: var(--gc-own-color, var(--gc-success));
+    --bs-progress-bar-color: var(--gc-own-color-on, #fff);
+}
+
+/* Belt-and-suspenders pro případ, že Bootstrap má jinou cestu. */
+.gc-personalized .progress-bar.gc-own-fill {
+    background-color: var(--gc-own-color, var(--gc-success)) !important;
+    color: var(--gc-own-color-on, #fff) !important;
+}
+
+/* Badge varianta — uvnitř personalized wrapperu vyšší specificity
+   abychom přebili případné Bootstrap utility classes. */
+.gc-personalized .badge.gc-bg-own {
+    background-color: var(--gc-own-color, var(--gc-accent)) !important;
+    color: var(--gc-own-color-on, #fff) !important;
+}
+
+/* Card header v gc-bg-own drží tučný look + nuance. */
+.card-header.gc-bg-own {
+    border-bottom: 1px solid currentColor;
+}
+
+/* ── Handle swatch (color tečka vedle handle name) ──────────────────── */
+.gc-swatch {
+    display: inline-block;
+    width: 0.85em;
+    height: 0.85em;
+    border-radius: 50%;
+    margin-right: 0.4em;
+    vertical-align: -0.05em;
+    flex-shrink: 0;
+}
+
+.gc-swatch.bordered {
+    border: 1px solid var(--gc-rule);
+}
+
+.gc-handle-with-swatch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    font-family: var(--gc-mono);
+    font-weight: 600;
+    color: var(--gc-ink);
+}
+
+/* ── Success-on-top: prominent K* + Safety Number card ──────────────── */
+.gc-success-top {
+    border: 2px solid var(--gc-success);
+    background: linear-gradient(180deg, #ecfdf5 0%, #ffffff 100%);
+    border-radius: 6px;
+    padding: 1.5rem 1.75rem;
+    margin: 0 0 1.5rem 0;
+    animation: success-pulse 1200ms ease-out;
+}
+
+@keyframes success-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(45, 106, 79, 0.5); transform: scale(0.985); }
+    50%  { box-shadow: 0 0 18px 6px rgba(45, 106, 79, 0.25); transform: scale(1); }
+    100% { box-shadow: 0 0 0 0 rgba(45, 106, 79, 0); transform: scale(1); }
+}
+
+.gc-success-title {
+    font-family: var(--gc-sans);
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--gc-success);
+    margin: 0 0 1rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.gc-success-title::before {
+    content: "✓";
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    background: var(--gc-success);
+    color: white;
+    border-radius: 50%;
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.gc-safety-block {
+    background: white;
+    border: 1px solid var(--gc-rule);
+    border-radius: 4px;
+    padding: 1rem 1.25rem;
+    margin: 0.75rem 0;
+}
+
+.gc-safety-label {
+    font-family: var(--gc-sans);
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gc-ink-muted);
+    margin-bottom: 0.4rem;
+}
+
+.gc-safety-value {
+    font-family: var(--gc-mono);
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: var(--gc-success);
+    line-height: 1.2;
+}
+
+.gc-kstar-block {
+    background: white;
+    border: 1px solid var(--gc-rule);
+    border-radius: 4px;
+    padding: 1rem 1.25rem;
+    margin: 0.75rem 0 0 0;
+}
+
+/* Verify callout uvnitř success cardu — vysvětluje, co Final
+   garantuje a co ne (paper §1.5 passive vs active MITM). Tlumený
+   yellow tint odlišuje od jistoty zeleného rámečku. */
+.gc-verify-note {
+    background: rgba(253, 242, 205, 0.6);
+    border-left: 3px solid var(--gc-warning);
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    margin: 1rem 0;
+    font-size: 0.95rem;
+    line-height: 1.55;
+}
+
+.gc-verify-note-title {
+    font-family: var(--gc-sans);
+    font-weight: 600;
+    color: var(--gc-warning);
+    margin: 0 0 0.4rem 0;
+    font-size: 0.95rem;
+}
+
+.gc-kstar-value {
+    font-family: var(--gc-mono);
+    font-size: 0.95rem;
+    line-height: 1.5;
+    word-break: break-all;
+    color: var(--gc-ink);
+    margin: 0;
+    /* Group hex 4-by-4 visually for OOB compare. Achieved via letter
+       spacing — pairs are ToHex output, browser word-wraps as needed. */
+}
+
+/* ── Mobile ─────────────────────────────────────────────────────────── */
+@media (max-width: 575px) {
+    html, body { font-size: 16px; }
+    h1 { font-size: 1.6rem; }
+    h2 { font-size: 1.25rem; }
+    .gc-header-inner { padding: 0 1rem; }
+    .gc-nav { gap: 0.75rem; font-size: 0.875rem; }
+}

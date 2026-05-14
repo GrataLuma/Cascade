@@ -1,0 +1,71 @@
+@inherits LayoutComponentBase
+@inject NavigationManager Nav
+@inject Demo.Client.Services.LanguageService Lang
+
+<PublicTestbedBanner />
+
+<header class="gc-header">
+    <div class="gc-header-inner">
+        <a href="/" class="gc-brand">
+            Grata Cascade
+            <span class="gc-brand-suffix">paper companion</span>
+        </a>
+        <nav class="gc-nav">
+            <a href="/" class="@NavClass("/")">@(Lang.IsCs ? "O projektu" : "About")</a>
+            <a href="/demo" class="@NavClass("/demo")">Demo</a>
+            <button type="button" class="gc-lang-toggle"
+                    title="@(Lang.IsCs ? "Switch to English" : "Přepnout do češtiny")"
+                    @onclick="OnLangToggle">
+                <span class="@(Lang.IsCs ? "active" : "")">CS</span>
+                <span class="gc-lang-sep">/</span>
+                <span class="@(Lang.IsEn ? "active" : "")">EN</span>
+            </button>
+        </nav>
+    </div>
+</header>
+
+<main class="container py-3">
+    @Body
+</main>
+
+<footer class="gc-footer">
+    <div class="gc-footer-inner">
+        <div>
+            @(Lang.IsCs
+                ? (MarkupString)"© Grata Luma s.r.o. — kód MIT, paper CC&nbsp;BY&nbsp;4.0"
+                : (MarkupString)"© Grata Luma s.r.o. — code MIT, paper CC&nbsp;BY&nbsp;4.0")
+        </div>
+        <div>
+            <a href="https://github.com/GrataLuma/Cascade" target="_blank" rel="noopener">GitHub</a>
+            ·
+            <a href="https://eprint.iacr.org/" target="_blank" rel="noopener">IACR ePrint</a>
+        </div>
+    </div>
+</footer>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        Lang.OnChanged += OnLangChanged;
+        Nav.LocationChanged += (_, _) => InvokeAsync(StateHasChanged);
+        await Lang.InitializeAsync();
+    }
+
+    private void OnLangChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task OnLangToggle() => await Lang.ToggleAsync();
+
+    private string NavClass(string route)
+    {
+        var current = new Uri(Nav.Uri).AbsolutePath.TrimEnd('/');
+        if (string.IsNullOrEmpty(current)) current = "/";
+        var target = route.TrimEnd('/');
+        if (string.IsNullOrEmpty(target)) target = "/";
+        return string.Equals(current, target, StringComparison.OrdinalIgnoreCase) ? "active" : "";
+    }
+
+    public void Dispose()
+    {
+        Lang.OnChanged -= OnLangChanged;
+    }
+}

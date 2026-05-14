@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "name": "break_demo",
+  "description": "Research-only break-demo config validating paper Open Problem prob:breakdemo. L=8, N=256, h_AB=3, h_BA=1, h_P=3 -> lambda_preimage=56 bits classical (below paper extreme of 64). M=4 halved final slots, p_upd=1.0 deterministic update (removes A/B probabilistic advantage). Sub-extreme lambda; expected legitimate KM degradation and non-zero attacker success. NOT FOR PRODUCTION.",
+  "calibration_status": "research_breakdemo",
+  "protocol": {
+    "vector_length": 8,
+    "vector_count": 256,
+    "hash_length_ab": 3,
+    "hash_length_ba": 1,
+    "hash_length_password": 3,
+    "seed_min_max": 4,
+    "aes_passed_vectors_count": 4,
+    "update_probability": 1.0,
+    "termination_threshold_log2": -300,
+    "cut_limit_probability_log2": -8,
+    "candidate_max_probability_log2": -8,
+    "cut_limit_safety_attempts": 1000,
+    "max_iterations": 500
+  },
+  "rng": {
+    "type": "crypto",
+    "seed": null
+  }
+}

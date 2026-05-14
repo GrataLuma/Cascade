@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "name": "high_security_pq128",
+  "description": "Post-quantum high-security profile under reference v2: L=64, N=8192. h_AB=6, h_BA=3, h_P=9 bytes -> lambda_preimage = 144 bits classical (~72 bits Grover-bounded per round). M=16 Final slots; bandwidth M*h_P = 144 B/round. s=4 (v2 sparsity), CandMax disabled (= -8 same as cut_limit, matches v2 reference philosophy), MaxIter=500 explicit. Pending F11-v2 re-validation.",
+  "calibration_status": "calibrated_f11_v2",
+  "protocol": {
+    "vector_length": 64,
+    "vector_count": 8192,
+    "hash_length_ab": 6,
+    "hash_length_ba": 3,
+    "hash_length_password": 9,
+    "seed_min_max": 4,
+    "aes_passed_vectors_count": 16,
+    "update_probability": 0.75,
+    "termination_threshold_log2": -512,
+    "cut_limit_probability_log2": -8,
+    "candidate_max_probability_log2": -8,
+    "cut_limit_safety_attempts": 1000,
+    "max_iterations": 500
+  },
+  "rng": {
+    "type": "crypto",
+    "seed": null
+  }
+}

@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="../GrataCascade.Core/GrataCascade.Core.csproj" />
+  <Project Path="HashFirstAttacker/HashFirstAttacker.csproj" />
+  <Project Path="NistTests/NistTests.csproj" />
+  <Project Path="EvalSuite/EvalSuite.csproj" />
+  <Project Path="../Demo/Demo.Shared/Demo.Shared.csproj" />
+  <Project Path="../Demo/Demo.Server/Demo.Server.csproj" />
+  <Project Path="../Demo/Demo.Client/Demo.Client.csproj" />
+</Solution>

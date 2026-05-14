@@ -1,0 +1,294 @@
+@page "/"
+@inject Demo.Client.Services.LanguageService Lang
+@implements IDisposable
+
+<PageTitle>Grata Cascade — paper companion demo</PageTitle>
+
+<div class="gc-narrow">
+
+    <h1>Grata Cascade</h1>
+
+@if (Lang.IsCs)
+{
+    <p class="lead" style="font-size: 1.15rem; color: var(--gc-ink-muted);">
+        One-shot key agreement primitiv postavený na hash preimage
+        resistance a statistickém driftu &mdash; bez DLP a bez mřížek.
+    </p>
+
+    <p>
+        Klasický <em>Diffie&ndash;Hellman</em> opírá svou bezpečnost o
+        diskrétní logaritmus; postkvantové ML&#8209;KEM o problém
+        <em>module&#8209;LWE</em>. Grata Cascade přidává nezávislou
+        třetí možnost: shodu na 32&#8209;bytovém klíči
+        <span class="text-monospace">K*</span> z &asymp;&nbsp;49&nbsp;kol
+        veřejných hashů a AES&#8209;CBC ciphertextů, jejíž
+        bezpečnostní pilíř je výhradně <em>preimage resistance</em>
+        použité hash funkce. Pozice v hybridní postkvantové kompozici
+        je třetí nezávislá vrstva &mdash;
+        <span class="text-monospace">X25519&nbsp;&oplus;&nbsp;ML&#8209;KEM&#8209;768&nbsp;&oplus;&nbsp;Grata&nbsp;Cascade</span>.
+    </p>
+
+    <h2>Co toto demo ukazuje</h2>
+
+    <p>
+        Otevřete dvě (nebo více) karet&nbsp;v prohlížeči. Každá dostane
+        unikátní jméno ve&nbsp;tvaru <code>color&#8209;animal</code>
+        (např.&nbsp;<code>blue&#8209;bear</code>) a&nbsp;v&nbsp;lobby
+        uvidí ostatní připojené uživatele. Vyberete si protistranu,
+        odešlete jí žádost o párování; po jejím <em>Přijmout</em>
+        začnou obě karty samostatně počítat &mdash; jedna
+        v&nbsp;roli&nbsp;A, druhá v&nbsp;roli&nbsp;B.
+    </p>
+
+    <p>
+        Server slouží <em>pouze jako relay</em>. Nevidí klíče ani
+        protokolový stav, jen forwarduje veřejné zprávy z&nbsp;A na
+        B&nbsp;a&nbsp;naopak &mdash; přesně to, co by viděl pasivní
+        odposlouchávač v&nbsp;§&nbsp;1.5 paperu. Po dokončení obě
+        strany nezávisle vypočítají identický
+        <span class="text-monospace">K*</span> a&nbsp;UI vám ukáže
+        krátké <em>Safety Number</em> ve&nbsp;tvaru
+        <span class="text-monospace">XXXX&#8209;XXXX</span> &mdash;
+        out&#8209;of&#8209;band check, jestli se obě strany shodly na
+        stejném klíči.
+    </p>
+
+    <div class="gc-disclaimer" role="note">
+        <div class="gc-disclaimer-title">Demo only &mdash; passive&#8209;adversary scenario</div>
+        Server je čestný relay, ne autentizovaný transport.
+        Aktivní MITM zde <em>není</em> blokován &mdash; reálné
+        nasazení vyžaduje TLS / Noise plus out&#8209;of&#8209;band
+        verifikaci klíčů. Detail v&nbsp;disclaimer&nbsp;sekci dema
+        a&nbsp;v&nbsp;§&nbsp;1.5 paperu.
+    </div>
+
+    <p style="margin-top: 2rem; text-align: center;">
+        <a href="/demo" class="gc-cta">Spustit demo &rarr;</a>
+    </p>
+
+    <h2>Zdroje</h2>
+
+    <ul class="gc-resource-list">
+        <li>
+            <span>
+                <span class="gc-resource-label">Paper (PDF, EN)</span><br/>
+                <span class="gc-resource-meta">Grata Cascade &mdash; one-shot KE primitive, v9</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade/blob/main/paper/v9/files/Grata_Cascade_en_v9.pdf"
+               target="_blank" rel="noopener">otevřít</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">Paper (PDF, CZ)</span><br/>
+                <span class="gc-resource-meta">Grata Cascade &mdash; jednorázový KE primitiv, v9</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade/blob/main/paper/v9/files/Grata_Cascade_cz_v9.pdf"
+               target="_blank" rel="noopener">otevřít</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">Populární průvodce (PDF, CZ)</span><br/>
+                <span class="gc-resource-meta">Pro čtenáře bez kryptografického backgroundu</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade/blob/main/paper/v9/files/Grata_Cascade_pop_cz_v9.pdf"
+               target="_blank" rel="noopener">otevřít</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">Popular companion (PDF, EN)</span><br/>
+                <span class="gc-resource-meta">Pro čtenáře bez kryptografického backgroundu</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade/blob/main/paper/v9/files/Grata_Cascade_pop_en_v9.pdf"
+               target="_blank" rel="noopener">otevřít</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">Source code</span><br/>
+                <span class="gc-resource-meta">GrataLuma/Cascade &mdash; .NET&nbsp;9, dual&#8209;licensed MIT&nbsp;+&nbsp;CC&nbsp;BY&nbsp;4.0</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade"
+               target="_blank" rel="noopener">github.com</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">IACR ePrint</span><br/>
+                <span class="gc-resource-meta">submitted 2026&#8209;05&#8209;09, čeká na moderátorské schválení</span>
+            </span>
+            <span class="gc-resource-meta">URL TBD</span>
+        </li>
+    </ul>
+
+    <h2>Reference parametry</h2>
+
+    <p>
+        Demo běží na <em>reference&nbsp;v2</em> profilu z&nbsp;paperu:
+        <span class="text-monospace">L=32</span>,
+        <span class="text-monospace">N=4096</span>,
+        <span class="text-monospace">h<sub>AB</sub>=5</span>,
+        <span class="text-monospace">h<sub>BA</sub>=2</span>,
+        <span class="text-monospace">h<sub>P</sub>=8</span>,
+        <span class="text-monospace">M=8</span>,
+        <span class="text-monospace">p<sub>upd</sub>=0.75</span>,
+        odhad bezpečnosti
+        <span class="text-monospace">&lambda;<sub>preimage</sub>&nbsp;&approx;&nbsp;120&nbsp;bitů</span>.
+        Empirický headline: F2&#8209;v2 50k&nbsp;sezení = 100&nbsp;%
+        FullHash, 99.9920&nbsp;% KeyMatch, NIST&nbsp;12/12&nbsp;PASS,
+        B.5&#8209;extended 0/300 přes 5&nbsp;tříd útočníků.
+    </p>
+
+    <h2>Citace</h2>
+}
+else
+{
+    <p class="lead" style="font-size: 1.15rem; color: var(--gc-ink-muted);">
+        A one-shot key agreement primitive built on hash preimage
+        resistance and statistical drift &mdash; no DLP, no lattices.
+    </p>
+
+    <p>
+        Classical <em>Diffie&ndash;Hellman</em> rests on the discrete
+        logarithm problem; post-quantum ML&#8209;KEM on
+        <em>module&#8209;LWE</em>. Grata Cascade adds an independent
+        third option: agreement on a 32-byte key
+        <span class="text-monospace">K*</span> via &asymp;&nbsp;49 rounds
+        of public hashes and AES&#8209;CBC ciphertexts, whose security
+        rests <em>solely</em> on the preimage resistance of the
+        underlying hash function. The intended position in a hybrid
+        post-quantum composition is the third independent layer &mdash;
+        <span class="text-monospace">X25519&nbsp;&oplus;&nbsp;ML&#8209;KEM&#8209;768&nbsp;&oplus;&nbsp;Grata&nbsp;Cascade</span>.
+    </p>
+
+    <h2>What this demo shows</h2>
+
+    <p>
+        Open two (or more) browser tabs. Each one is auto-assigned a
+        unique handle in the form <code>color&#8209;animal</code>
+        (e.g. <code>blue&#8209;bear</code>) and sees other connected
+        users in the lobby. Pick a peer, send them a pair request;
+        once they <em>Accept</em>, both tabs start computing
+        independently &mdash; one in role&nbsp;A, the other in role&nbsp;B.
+    </p>
+
+    <p>
+        The server acts <em>strictly as a relay</em>. It does not see
+        the keys nor the protocol state &mdash; only forwards public
+        messages from A to B and back, exactly what a passive
+        eavesdropper would see in §&nbsp;1.5 of the paper. Once the
+        protocol terminates, both sides independently derive the same
+        <span class="text-monospace">K*</span>, and the UI displays a
+        short <em>Safety Number</em> in the form
+        <span class="text-monospace">XXXX&#8209;XXXX</span> &mdash; an
+        out-of-band check that both sides did agree on the same key.
+    </p>
+
+    <div class="gc-disclaimer" role="note">
+        <div class="gc-disclaimer-title">Demo only &mdash; passive&#8209;adversary scenario</div>
+        The server is an honest relay, not an authenticated transport.
+        Active MITM is <em>not</em> blocked here &mdash; real-world
+        deployment requires TLS / Noise plus out-of-band key
+        verification. See the demo's disclaimer section and §&nbsp;1.5
+        of the paper for details.
+    </div>
+
+    <p style="margin-top: 2rem; text-align: center;">
+        <a href="/demo" class="gc-cta">Run demo &rarr;</a>
+    </p>
+
+    <h2>Resources</h2>
+
+    <ul class="gc-resource-list">
+        <li>
+            <span>
+                <span class="gc-resource-label">Paper (PDF, EN)</span><br/>
+                <span class="gc-resource-meta">Grata Cascade &mdash; one-shot KE primitive, v9</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade/blob/main/paper/v9/files/Grata_Cascade_en_v9.pdf"
+               target="_blank" rel="noopener">open</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">Paper (PDF, CZ)</span><br/>
+                <span class="gc-resource-meta">Czech parallel translation</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade/blob/main/paper/v9/files/Grata_Cascade_cz_v9.pdf"
+               target="_blank" rel="noopener">open</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">Popular companion (PDF, EN)</span><br/>
+                <span class="gc-resource-meta">For readers without a cryptography background</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade/blob/main/paper/v9/files/Grata_Cascade_pop_en_v9.pdf"
+               target="_blank" rel="noopener">open</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">Populární průvodce (PDF, CZ)</span><br/>
+                <span class="gc-resource-meta">Czech parallel translation</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade/blob/main/paper/v9/files/Grata_Cascade_pop_cz_v9.pdf"
+               target="_blank" rel="noopener">open</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">Source code</span><br/>
+                <span class="gc-resource-meta">GrataLuma/Cascade &mdash; .NET&nbsp;9, dual-licensed MIT&nbsp;+&nbsp;CC&nbsp;BY&nbsp;4.0</span>
+            </span>
+            <a href="https://github.com/GrataLuma/Cascade"
+               target="_blank" rel="noopener">github.com</a>
+        </li>
+        <li>
+            <span>
+                <span class="gc-resource-label">IACR ePrint</span><br/>
+                <span class="gc-resource-meta">submitted 2026&#8209;05&#8209;09, awaiting moderator approval</span>
+            </span>
+            <span class="gc-resource-meta">URL TBD</span>
+        </li>
+    </ul>
+
+    <h2>Reference parameters</h2>
+
+    <p>
+        The demo runs on the <em>reference&nbsp;v2</em> profile from
+        the paper:
+        <span class="text-monospace">L=32</span>,
+        <span class="text-monospace">N=4096</span>,
+        <span class="text-monospace">h<sub>AB</sub>=5</span>,
+        <span class="text-monospace">h<sub>BA</sub>=2</span>,
+        <span class="text-monospace">h<sub>P</sub>=8</span>,
+        <span class="text-monospace">M=8</span>,
+        <span class="text-monospace">p<sub>upd</sub>=0.75</span>,
+        security estimate
+        <span class="text-monospace">&lambda;<sub>preimage</sub>&nbsp;&approx;&nbsp;120&nbsp;bits</span>.
+        Empirical headline: F2-v2 50k sessions = 100&nbsp;%
+        FullHash, 99.9920&nbsp;% KeyMatch, NIST&nbsp;12/12&nbsp;PASS,
+        B.5-extended 0/300 across 5 attacker classes.
+    </p>
+
+    <h2>Citation</h2>
+}
+
+    <pre style="font-size: 0.8rem;">@@misc{gratacascade2026,
+  author       = {Grata Luma s.r.o.},
+  title        = {Grata Cascade: A One-Shot Key Agreement Primitive
+                  Based on Hash Preimage Resistance and Statistical Drift},
+  year         = {2026},
+  howpublished = {Cryptology ePrint Archive, Paper 2026/XXXX},
+  note         = {\url{https://eprint.iacr.org/2026/XXXX}},
+}</pre>
+
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Lang.OnChanged += OnLangChanged;
+    }
+
+    private void OnLangChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Lang.OnChanged -= OnLangChanged;
+    }
+}

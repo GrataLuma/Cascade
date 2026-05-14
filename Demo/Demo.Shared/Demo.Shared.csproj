@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>Demo.Shared</RootNamespace>
+    <AssemblyName>Demo.Shared</AssemblyName>
+    <Nullable>disable</Nullable>
+    <LangVersion>10.0</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\GrataCascade.Core\GrataCascade.Core.csproj" />
+  </ItemGroup>
+
+</Project>

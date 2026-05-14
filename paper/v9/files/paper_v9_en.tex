@@ -1,0 +1,1215 @@
+% Paper v9 (2026-05-06) — scope correction from v8.
+% Reframing: one-shot multi-round symmetric KA primitive (NOT CKA).
+% v8 framed Grata Cascade as CKA, but the protocol does not define or
+% implement an ACD19-style CKA game (output is a single K* per session,
+% no sequence {k_i}, no state continuity, no formal FS/PCS). v9 corrects:
+% - title + abstract + intro reframed to one-shot KE
+% - §8 comparison rewritten: ECDH, ML-KEM, X-Wing, Merkle puzzles (NOT Triple Ratchet)
+% - §9 adds primary open problem prob:cka-extension with 3 paths (A/B/C),
+%   path A = repeated-session chaining = primary follow-up target
+% - ~70% of v8 content recycled (technical core §3-§7 unchanged)
+%
+% Canonical reference v2: L=32, N=4096, h_AB=5, h_BA=2, h_P=8, M=8, s=4,
+% p_upd=0.75, CutLimit=-8, CandMax disabled by default (configurable Tier-3
+% defense), MaxIter=500, lambda=120 bits.
+% v3 reference candidate: reference_h_AB6 (h_AB=5->6 only; lambda=128 bits;
+% +4 KB/round at N=4096), validated by 50k-run ablation (Section 7.1.1).
+% Five passive adversary classes catalogued (B.1, B.2, B.3, B.4, B.7).
+% Empirical artefacts under reports/refv2/: F2-v2 (50k convergence),
+% NIST-v2 (12/12 PASS, 1000 keys), B.5-extended-v2 (0/300, 4 attackers),
+% h_AB=6 ablation (50k, 0 div, CP upper 7.38e-5), break_demo (B.7 0/300).
+% Source of truth for parameters: docs/glossary.md, configs/reference.json.
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{enumitem}
+
+\geometry{margin=2.5cm}
+
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+\newtheorem{claim}{Claim}
+\newtheorem{observation}{Observation}
+\newtheorem{openproblem}{Open Problem}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue,
+    citecolor=black
+}
+
+\title{Grata Cascade: Hash-based One-Shot Key Agreement\\
+via Statistical Drift\\
+\large as a Candidate for Hybrid Post-Quantum Key Establishment}
+
+\author{Robert Jarušek\\Grata Luma s.r.o., Prague}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Modern hybrid key establishment combines two computational assumptions --- Diffie--Hellman and Module-LWE --- to obtain post-quantum security. We present \emph{Grata Cascade}, a one-shot key agreement primitive based exclusively on a third, structurally independent assumption: SHA-256 preimage resistance combined with statistical drift of a publicly reconstructable shared state. The protocol converges in approximately $49$ rounds (median), produces a 32-byte key $K^*$, and offers a cumulative preimage barrier of $\lambda = 120$ bits per session.
+
+We make three contributions: (1) a structural argument for the security of $K^*$ based on a generalised-birthday asymmetry $R \approx n/k$ amplified across rounds; (2) empirical validation across $5 \times 10^4$ convergence runs ($100\%$ Final-hit, $99{,}992\%$ keys-match, Clopper--Pearson upper $95\%$ CI on the failure rate $2{,}05 \cdot 10^{-4}$), NIST SP 800-22 statistical testing ($12/12$ PASS over $1000$ keys), and $5$ classes of passive adversaries (B.1--B.4, B.7) on $N=300$ transcripts each ($0/300$ recoveries, B.4 oracle Cohen's $d = 0{,}009$); (3) a comparison with established one-shot key agreement primitives (ECDH, ML-KEM, X-Wing hybrid, Merkle puzzles).
+
+Three structural defenses are identified and analysed on the reference configuration ($L = 32$, $N = 4096$, $h_{AB} = 5$, $h_{BA} = 2$, $h_P = 8$, $M = 8$): (1) cumulative preimage barrier $\lambda = 120$ bits across three progressively narrowing hash filters, each with a distinct design rationale; (2) indistinguishable candidate set of size $2^{8L - \lambda} = 2^{136}$ above the preimage barrier; (3) AES-CBC NoPadding key derivation without validation oracle. An $h_{AB} = 6$ ablation across $5 \times 10^4$ runs (zero KM divergences, Clopper--Pearson upper $95\%$ CI $7{,}38 \cdot 10^{-5}$) positions \texttt{reference\_h\_AB6} as a v3 reference profile candidate.
+
+We discuss extending Grata Cascade to a \emph{Continuous} Key Agreement (CKA) primitive in the sense of Alwen--Coretti--Dodis (ACD19) as an open research direction (Section~\ref{sec:open}, \texttt{prob:cka-extension}), sketching three possible paths (repeated-session chaining, symmetric ratchet on top, native CKA construction) and their formal requirements. The current work establishes the one-shot primitive as a candidate for the \emph{third} independent layer in X-Wing-style hybrid post-quantum key establishment.
+\end{abstract}
+
+\medskip
+\textbf{Keywords:} one-shot key agreement, hybrid post-quantum cryptography, statistical drift, hash collisions, generalised birthday problem, SHA-256 preimage, X-Wing.
+
+\section{Introduction}\label{sec:intro}
+
+\subsection{Hybrid Post-Quantum Key Establishment}\label{sec:hybrid-pq}
+
+Modern cryptographic deployments (TLS 1.3, Signal, MLS) perform an initial symmetric key agreement in a single round: both parties derive a shared key $K$ from an exchange of public contributions. For post-quantum security the principle of \emph{hybrid} key establishment has become the norm: composing two independent computational assumptions --- classical (Diffie--Hellman, ECDH) and lattice-based (Module-LWE, ML-KEM) --- so that an adversary must break \emph{both} to recover $K$. The concrete deployment standard is \emph{X-Wing}~\cite{xwing}, a NIST recommendation combining X25519 and ML-KEM-768 into a single hybrid KEM. Signal's PQXDH~\cite{PQXDH} uses an analogous composition. Hybrid ECDH ⊕ ML-KEM provides \emph{computational diversification}: if an unexpected attack against one assumption surfaces, the other still holds.
+
+\subsection{Open question: A third independent assumption}\label{sec:third-assumption}
+
+Current hybrid composition rests on two assumptions. For genuine \emph{structural independence} the natural question is: does a \emph{third}, practically usable family of one-shot KE primitives exist, resting on a still different computational assumption than DLP and lattice problems?
+
+Hash-based constructions offer a candidate third base. Merkle puzzles~\cite{Merkle1978} show that key agreement is in principle possible purely on top of a one-way function, albeit at $O(N^2)$ adversarial cost in the black-box model~\cite{IR1989}. SPHINCS+~\cite{SPHINCS+} demonstrates that hash-based foundations admit post-quantum signatures with formal reductions. For hash-based KE primitives, however, no efficient construction has yet emerged that simultaneously beats the $O(N^2)$ Merkle bound and admits formally analysable security.
+
+\subsection{Grata Cascade as a candidate}\label{sec:gc-as-candidate}
+
+In this paper we present \emph{Grata Cascade} (GC), a one-shot key agreement primitive based exclusively on a third, structurally independent assumption: SHA-256 preimage resistance combined with the \emph{statistical drift} of a publicly reconstructable shared state. The protocol converges in approximately $49$ rounds (median), produces a 32-byte key $K^*$, and offers a cumulative preimage barrier $\lambda = 120$ bits per session.
+
+Statistical drift is the new design element (Section~\ref{sec:drift}). In short: the legitimate parties maintain a synchronised, randomly evolving state $\mathcal{S}_t$ that structurally shifts the probability distribution of candidate vectors out of reach of direct adversarial sampling. The adversary observes the public transcript and can reconstruct $\mathcal{S}_t$ on her own, but has no access to the concrete samples drawn from it by the legitimate parties. This mechanism, combined with deterministic hash addressing, AES-CBC NoPadding key derivation without a validation oracle, and TPM-inspired probabilistic update (Section~\ref{sec:transformation}), transforms the static birthday asymmetry $R \approx n/k$ into a convergent system: the legitimate parties reach $K^*$ with high probability while the adversary remains in an indistinguishable candidate set of size $2^{8L - \lambda} = 2^{136}$.
+
+Concrete positioning: Grata Cascade is intended as a candidate for the \emph{third} independent layer in an X-Wing-style hybrid composition. It is not meant to replace ECDH or ML-KEM but to join them as a third coequal layer whose security rests on a structurally different base.
+
+\paragraph{Scope versus CKA primitives.} The present construction outputs \emph{one} key $K^*$ per session; it does not define or implement a sequence $\{k_1, k_2, \ldots\}$ with inter-message rotation as required by the formal Continuous Key Agreement (CKA) definition of Alwen, Coretti and Dodis~\cite{ACD19}. Extending Grata Cascade to a CKA primitive is a non-trivial open direction; in Section~\ref{sec:open} (\texttt{prob:cka-extension}) we sketch three possible paths together with their formal requirements.
+
+\subsection{Contributions}\label{sec:contributions}
+
+This paper contributes:
+\begin{itemize}[leftmargin=*]
+\item A self-contained derivation of the generalised birthday problem for $m$ parties (Section~\ref{sec:static}), establishing the static asymmetric knowledge bound $R \approx n/k$ as the probabilistic foundation for $K^*$ security.
+\item Explicit framing of four design decisions (deterministic hash addressing, random vector drift, probabilistic vector update with TPM-inspired adaptation, AES without padding as flooding defense) that transform the static birthday bound into a multi-round convergent system (Section~\ref{sec:transformation}).
+\item Grata Cascade, a novel parametric family of one-shot KE primitives based solely on hash preimage resistance and shared statistical state, free of number-theoretic or lattice dependencies (Section~\ref{sec:concrete}).
+\item Statistical drift as a concrete defense mechanism addressing the geometric weakness of the historical Tree Parity Machine~\cite{KMS2003}, with an empirically calibrated operating range $p_\text{upd} \in [0{,}6, 0{,}95]$ (Section~\ref{sec:drift}).
+\item AES-CBC with \texttt{PaddingMode.None} as a flooding defense against adversaries with arbitrarily large vector pools; explicit characterisation of the indistinguishable candidate-set size $2^{8L - \lambda_\text{preimage}}$ as a designed security property (Section~\ref{sec:aes}).
+\item Three distinct design rationale for hash prefix lengths: $h_{AB}$ as correctness floor, $h_{BA}$ as flooding defense budget contribution, $h_P$ as cross-round synchronisation threshold (Section~\ref{sec:rationale}).
+\item Empirical validation on reference v2: Final-hit rate $100\%$ over $5 \times 10^4$ runs; keys-match rate $99{,}992\%$; NIST SP 800-22 with $12/12$ PASS over $1000$ keys; passive adversary upper bound $1{,}22\%$ at $95\%$ Clopper--Pearson across five attack strategies (Section~\ref{sec:empirical}).
+\item Closure of the $h_{AB}$ residual-divergence question via a reference-scale $h_{AB} = 6$ ablation: $0/50\,000$ KM divergences, CP upper $7{,}38 \cdot 10^{-5}$ below the v2 baseline (Section~\ref{sec:empirical-habresidual}). \texttt{reference\_h\_AB6} stands as a v3 reference profile candidate.
+\item A new B.7 deterministic top-$K$ Stat-prior lattice enumeration adversary (Typical and Tail modes) extending the passive-adversary catalogue beyond random sampling (Section~\ref{sec:adv-b7}).
+\item A comparison with established one-shot KE primitives (ECDH, ML-KEM, X-Wing hybrid, Merkle puzzles) in Section~\ref{sec:comparison}, positioning Grata Cascade as a candidate third independent layer in hybrid composition.
+\item A formulation of the CKA extension as a priority open direction in Section~\ref{sec:open} (\texttt{prob:cka-extension}), with a concretely specified research programme along three paths.
+\end{itemize}
+
+\subsection{Scope of claims and threat model}\label{sec:scope}
+
+This paper explicitly distinguishes four categories of claims:
+\begin{itemize}[leftmargin=*]
+\item \textbf{Formally proved} (mathematical theorems with proof): the generalised birthday formula~\eqref{eq:pm-main}, asymptotic bound~\eqref{eq:asymptotic}, asymmetric ratio $R \approx n/k$ (Section~\ref{sec:static}).
+\item \textbf{Structurally argued}: the security of $K^*$ against a passive adversary in reference v2 rests on three structural defenses (cumulative preimage barrier $\lambda = 120$ bits, indistinguishable candidate set $2^{136}$, AES without padding $=$ no validation oracle). The arguments are structural, not formally reduced; see~\texttt{prob:dynamic-formal} in Section~\ref{sec:open}.
+\item \textbf{Empirically measured}: convergence ($5 \times 10^4$ runs, $99{,}992\%$ KM), NIST SP 800-22 statistical uniformity ($12/12$ PASS over $1\,000$ keys), passive adversaries ($0/300$ across five classes, B.4 oracle Cohen's $d = 0{,}009$), $h_{AB} = 6$ ablation ($0/50\,000$, CP upper $7{,}38 \cdot 10^{-5}$). All data come from real runs of the C\# implementation (.NET 9, post-F3 SHA-NI).
+\item \textbf{Open}: formal reduction of dynamic asymmetry to SHA-256 preimage hardness, ML adversaries, multi-round weak-signal aggregation, full parametric attacker evaluation for the IoT and PQ128 profiles, extension to a CKA primitive (Section~\ref{sec:open}).
+\end{itemize}
+
+\paragraph{Threat model.} Grata Cascade is designed for deployment inside an \emph{authenticated transport} (TLS, Noise framework), where message integrity and peer authentication are provided by the transport layer. This matches the primary use case of production hybrid KE deployments. The adversary model is therefore a \emph{passive adversary} observing the public transcript of one session; active network adversaries that bypass the transport layer are out of scope.
+
+\subsection{Outline}\label{sec:outline}
+
+Section~\ref{sec:static} derives the generalised birthday problem and its asymmetric knowledge bound. Section~\ref{sec:transformation} explains how the static bound is transformed into a dynamic system through specific design choices. Section~\ref{sec:concrete} specifies the Grata Cascade protocol and its parametric family. Sections~\ref{sec:drift} and~\ref{sec:aes} examine statistical drift and AES key derivation as adversarial defenses. Section~\ref{sec:empirical} presents empirical evaluation. Section~\ref{sec:comparison} compares against established one-shot KE primitives (ECDH, ML-KEM, X-Wing, Merkle puzzles). Section~\ref{sec:open} states open problems including the CKA extension as a priority direction. Section~\ref{sec:conclusion} concludes.
+
+\medskip
+\noindent\textit{Birthday paradox describes a static state. Grata Cascade builds a dynamic one-shot system on top of it. The continuous variant remains open.}
+
+\section{Related Work}\label{sec:related}
+
+\subsection{One-shot key agreement and hybrid composition}\label{sec:related-oneshot}
+
+Classical one-shot symmetric key agreement is mathematically solved by the Diffie--Hellman exchange (DH) and its elliptic-curve variant ECDH (e.g.\ X25519), the standard building block of TLS 1.3 and Signal X3DH. With the advent of post-quantum adversaries Diffie--Hellman becomes vulnerable to Shor's algorithm, and current deployments use hybrid KEM compositions combining classical DH with a post-quantum primitive.
+
+\textbf{ML-KEM} (Module-LWE based KEM, formerly Kyber) is the first standardised post-quantum KEM (NIST FIPS 203, 2024). The construction rests on the hardness of the Module-LWE problem and offers approximately 192-bit post-quantum security in the ML-KEM-768 variant with $\sim 1{.}2$ KB transmission.
+
+\textbf{X-Wing}~\cite{xwing} is a recommended NIST hybrid combining X25519 and ML-KEM-768 into a single hybrid KEM. An adversary must break \emph{both} to recover the key, providing computational diversification across two independent assumptions (DLP and Module-LWE). \textbf{PQXDH}~\cite{PQXDH} in Signal uses an analogous composition as the initial key agreement in the ratchet protocol.
+
+The history of SIDH/SIKE (isogenies of supersingular elliptic curves), broken in 2022, illustrates the value of structural diversification: had SIKE been the only post-quantum KEM, its fall would have endangered the entire post-quantum stack. The current X-Wing standard explicitly requires two independent assumptions; whether two independent assumptions suffice for long-term security remains an open question.
+
+\subsection{Hash-based key agreement}\label{sec:related-hash}
+
+The line of hash-based constructions for key agreement has a long but narrow history. \textbf{Merkle puzzles}~\cite{Merkle1978} (1978) are the first construction: Alice sends $N$ puzzles, each at $O(N)$ work; Bob solves one in $O(N)$; Eve must inspect them all in $O(N^2)$. \textbf{Impagliazzo and Rudich}~\cite{IR1989} (1989) showed that $O(N^2)$ is optimal in the black-box model for hash-only KE --- no construction purely on top of a one-way function reaches better than quadratic security.
+
+This is the structural limit of hash-only KE: without combining with another assumption you only achieve ``quadratic'' security, so for $\lambda = 128$ bits you need $N \approx 2^{64}$ puzzles, which is deployment-prohibitive bandwidth. Hash-based constructions are therefore not used in most production KE deployments.
+
+Two exceptions are worth mentioning: \textbf{SPHINCS+}~\cite{SPHINCS+} is a purely hash-based signature scheme, NIST-standardised (FIPS 205, 2024) as an alternative to Dilithium; it demonstrates that hash-based constructions are formally analysable and deployable for PQ-secure \emph{signatures}. Hash-based KEM proposals (e.g.\ early HQC variants) experimented with hash cores but did not prevail in the final phase of NIST PQ KEM selection.
+
+Grata Cascade is a new construction in this line: it combines a hash base with \emph{statistical drift}, which structurally separates the computational advantage of legitimate parties from the adversary across many rounds. Whether this combination beats the Impagliazzo--Rudich black-box bound is conjectural (see~\texttt{prob:dynamic-formal} in Section~\ref{sec:open}).
+
+\subsection{Tree Parity Machine and its lessons}\label{sec:related-tpm}
+
+\textbf{Tree Parity Machine} (TPM) of Kinzel and Kanter~\cite{KKK2002} (2002) is a historical attempt at KE based on neural synchronisation: Alice and Bob train identical TPM networks in parallel; their internal weights gradually converge to a shared state, and the final state serves as the key. The principle of dynamic asymmetry across many rounds --- legitimate parties converge faster than the adversary thanks to a \emph{synchronisation phase} --- is structurally close to Grata Cascade.
+
+\textbf{Klimov, Mityagin and Shamir}~\cite{KMS2003} (2003) however broke TPM with a genetic and probabilistic attack: TPM has a geometric weakness in which an adversary running parallel TPM networks can synchronise with the legitimate parties in polynomial time. Concretely the attack exploits the fact that both parties share the \emph{same} weight matrix, so observing synchronisation messages reveals the gradient.
+
+Grata Cascade deliberately inherits the TPM-style \emph{adaptation phase} (Section~\ref{sec:transformation}, Design Choice 3) --- the probabilistic vector update through synchronised random input --- but is structurally different: \emph{there is no shared weight matrix}, only a publicly known $R_t$ influences the update in the same way on both sides. The adversary, even knowing $R_t$ exactly, cannot determine \emph{which} vectors each party updated. This is structurally different from the TPM weakness: the adversary has no observation that would allow her to track a geometric gradient.
+
+Whether Grata Cascade actually carries this lesson over adequately is the subject of the formal reduction in~\texttt{prob:dynamic-formal}.
+
+\subsection{CKA primitives and their relation to this work}\label{sec:related-cka}
+
+\textbf{Continuous Key Agreement} (CKA) is a formal primitive introduced by Alwen, Coretti and Dodis~\cite{ACD19} (ACD19) as a formalisation of the key rotation in the Signal Double Ratchet protocol~\cite{DR2017}. A CKA primitive produces a \emph{sequence} of keys $\{k_1, k_2, \ldots\}$ across many messages, with formal forward secrecy (FS) and post-compromise security (PCS) guarantees.
+
+More recent protocols are built directly on top of a CKA primitive: \textbf{Signal Double Ratchet}~\cite{DR2017} combines DH-CKA with a symmetric KDF ratchet; \textbf{Triple Ratchet (SPQR)}~\cite{SPQR2025} (2025) adds a post-quantum KEM-CKA layer (ML-KEM-based) to the Signal stack. MLS (Messaging Layer Security, RFC 9420, 2023) builds CKA-style group key agreement for group conversations.
+
+All of these constructions rest either on DLP (DH-CKA), on lattices (KEM-CKA), or on a symmetric base (KDF ratchet --- not an independent assumption). None of them rest on a hash-based assumption as a CKA primitive. Once extended to a CKA primitive (Section~\ref{sec:open}, \texttt{prob:cka-extension}), Grata Cascade could provide hash-based CKA as an independent alternative --- this is the long-term aim of this research line.
+
+In its current form GC produces only one $K^*$ per session, so it is \emph{not} a CKA primitive in the ACD19 sense. Our comparison in Section~\ref{sec:comparison} is therefore directed at one-shot KE primitives (ECDH, ML-KEM, X-Wing, Merkle puzzles), not at CKA constructions.
+
+\section{The Static Foundation: Generalised Birthday Problem}\label{sec:static}
+
+This section establishes the probabilistic foundation on which Grata Cascade is built. We derive the generalised birthday problem for $m$ parties, identify the asymmetric knowledge bound $R \approx n/k$ that quantifies the structural advantage of legitimate parties over adversaries, and apply the result to cryptographic parameter selection. The derivation here is \emph{static}: it describes a single random selection event. Section~\ref{sec:transformation} shows how this static foundation is transformed into a dynamic, convergent system.
+
+\subsection{Definition and Main Result}
+
+\begin{definition}\label{def:pmnk}
+Let $n, k, m \in \mathbb{N}$ with $1 \leq k \leq n$ and $m \geq 1$. Consider $m$ independent random variables $A_1, A_2, \ldots, A_m$, each uniformly distributed over $k$-subsets of $[n] = \{1, 2, \ldots, n\}$. Define
+\[
+P_m(n, k) = \Pr\!\left[\bigcap_{i=1}^{m} A_i \neq \emptyset\right].
+\]
+\end{definition}
+
+For $m = 2$, this is the probability that two parties independently selecting $k$-subsets share at least one common element. For $m = 3$, the third party can be interpreted as an adversary attempting to ``hit'' the intersection of the legitimate parties through its own $k$-subset selection.
+
+\begin{theorem}[Main inclusion-exclusion formula]\label{thm:pm-formula}
+For $1 \leq k \leq n$ and $m \geq 1$,
+\begin{equation}\label{eq:pm-main}
+P_m(n, k) = \sum_{r=1}^{k} (-1)^{r+1} \binom{n}{r} \left[\frac{\binom{n-r}{k-r}}{\binom{n}{k}}\right]^m.
+\end{equation}
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+For $i \in [n]$, let $E_i = \{i \in A_1 \cap A_2 \cap \cdots \cap A_m\}$. The desired probability is $\Pr(\bigcup_{i=1}^{n} E_i)$. By inclusion-exclusion and independence,
+\[
+\Pr\!\left(\bigcap_{i \in S} E_i\right) = \prod_{j=1}^{m} \Pr[S \subseteq A_j] = \left[\frac{\binom{n-r}{k-r}}{\binom{n}{k}}\right]^m
+\]
+for $|S| = r$. Summing over $r$-subsets yields~\eqref{eq:pm-main}.
+\end{proof}
+
+\begin{theorem}[Closed form for $m = 2$]\label{thm:p2-closed}
+For $m = 2$,
+\begin{equation}\label{eq:p2-closed}
+P_2(n, k) = 1 - \frac{\binom{n-k}{k}}{\binom{n}{k}},
+\end{equation}
+where $\binom{n-k}{k} = 0$ for $2k > n$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Fix $A_1$. Then $A_1 \cap A_2 = \emptyset$ if and only if $A_2 \subseteq [n] \setminus A_1$, i.e., $A_2$ is a $k$-subset of an $(n-k)$-set. Equivalence with~\eqref{eq:pm-main} follows from Vandermonde's identity.
+\end{proof}
+
+For $m \geq 3$, no analogously simple closed form exists; formula~\eqref{eq:pm-main} is used directly.
+
+\subsection{Asymptotic Analysis}
+
+For cryptographic applications the regime $k \ll n$ is critical. Direct expansion gives
+\[
+\frac{\binom{n-r}{k-r}}{\binom{n}{k}} = \prod_{j=0}^{r-1} \frac{k - j}{n - j} \approx \left(\frac{k}{n}\right)^r, \quad r = O(1), \; k \ll n.
+\]
+
+\begin{theorem}[Asymptotic bound]\label{thm:asymptotic}
+For $k^m / n^{m-1} \ll 1$,
+\begin{equation}\label{eq:asymptotic}
+P_m(n, k) = \frac{k^m}{n^{m-1}} \left(1 + O\!\left(\frac{k^m}{n^{m-1}}\right)\right).
+\end{equation}
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Substituting the approximation into~\eqref{eq:pm-main}:
+\[
+P_m \approx \sum_{r \geq 1} (-1)^{r+1} \frac{n^r}{r!} \cdot \frac{k^{rm}}{n^{rm}} = \sum_{r \geq 1} (-1)^{r+1} \frac{1}{r!} \left(\frac{k^m}{n^{m-1}}\right)^r.
+\]
+For $\varepsilon = k^m/n^{m-1} \ll 1$, the $r = 1$ term dominates and the remainder is $O(\varepsilon^2)$.
+\end{proof}
+
+\begin{theorem}[Generalised birthday bound]\label{thm:birthday-bound}
+The threshold $k^*$ at which $P_m \approx 1/2$ scales as
+\[
+k^* \sim n^{(m-1)/m}.
+\]
+For $m = 2$, this recovers the classical birthday bound $k \sim \sqrt{n}$. For $m = 3$, $k \sim n^{2/3}$.
+\end{theorem}
+
+\subsection{The Asymmetry Ratio}\label{sec:asymmetry-ratio}
+
+The central quantity for our purposes is the ratio of two-party collision probability to three-party intersection probability:
+\[
+R(n, k) = \frac{P_2(n, k)}{P_3(n, k)}.
+\]
+
+\begin{theorem}[Asymmetry ratio]\label{thm:asymmetry}
+For $k \ll n$,
+\begin{equation}\label{eq:asymmetry}
+R(n, k) \approx \frac{k^2 / n}{k^3 / n^2} = \frac{n}{k}.
+\end{equation}
+The function $R(n, \cdot)$ is monotonically non-increasing in $k$, with supremum $R(n, 1) = n$ and infimum $\lim_{k \to n/2} R(n, k) = 1$. The equality $R(n, 1) = n$ is exact.
+\end{theorem}
+
+This ratio $R = n/k$ \emph{quantifies the structural asymmetry} between two legitimate parties (who, after a single mutual selection event, share a common element with probability $P_2 \approx k^2/n$) and an adversary (who, observing only their own selection, hits the intersection with probability $P_3 \approx k^3/n^2$). The asymmetry is irreducible --- it derives from probability theory, not from any computational hardness assumption.
+
+\subsection{Application to Cryptographic Parameter Selection}\label{sec:crypto-application}
+
+Consider $n = 2^{128}$, a typical cryptographic state space (e.g., $128$-bit hash output). For a chosen negligibility level $\lambda$ (i.e., requiring $P_3 \leq 2^{-\lambda}$), we ask: what value of $k$ should we choose, and what are the resulting $P_2$ and $R$?
+
+From~\eqref{eq:asymptotic} with $m = 3$: $k^3 / n^2 = 2^{-\lambda}$. Setting $N = \log_2 n$ ($= 128$), we obtain the linear system
+\begin{equation}\label{eq:linear-system}
+\log_2 k = \frac{2N - \lambda}{3}, \quad \log_2 P_2 = \frac{N - 2\lambda}{3}, \quad \log_2 R = \frac{N + \lambda}{3}.
+\end{equation}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rlrrr}
+\toprule
+$\lambda$ & Context & $\log_2 k$ & $\log_2 P_2$ & $\log_2 R$ \\
+\midrule
+64 & weak threshold & 64{,}00 & 0 (saturation) & 64{,}00 \\
+80 & classical security & 58{,}67 & $-10{,}67$ & 69{,}33 \\
+112 & NIST post-2030 symmetric & 48{,}00 & $-32{,}00$ & 80{,}00 \\
+128 & full 128-bit & 42{,}67 & $-42{,}67$ & 85{,}33 \\
+160 & conservative & 32{,}00 & $-64{,}00$ & 96{,}00 \\
+256 & extreme (cosmological) & 0{,}00 & $-128{,}00$ & 128{,}00 \\
+\bottomrule
+\end{tabular}
+\caption{Parameter selection for $n = 2^{128}$ as function of negligibility level $\lambda$. The three quantities form a linear system: each $3$-bit increase in $\lambda$ shifts $\log_2 k$ by $-1$, $\log_2 P_2$ by $-2$, and $\log_2 R$ by $+1$.}
+\label{tab:lambda-tradeoff}
+\end{table}
+
+The triangle of trade-offs is fundamental: large $k$ (many samples), small $P_2$ (low two-party collision), and small $R$ (low asymmetry) cannot be simultaneously achieved --- any two constraints determine the third. Note the special case $\lambda = 80$: the adversary is held to negligible $P_3 \leq 2^{-80}$, while legitimate parties retain a non-trivial $P_2 \approx 1/1627$ collision probability --- the regime in which classical birthday-type protocols operate.
+
+\subsection{Why This is Static}\label{sec:why-static}
+
+The bounds derived above describe the probability of a \emph{single random selection event}. Each party picks a $k$-subset once, uniformly at random; the analysis quantifies what happens at that moment. Real cryptographic constructions cannot rely on this static event alone: for any practical $k \ll n$, $P_2 \to 0$, and legitimate parties would almost never share an intersection element to derive a key from.
+
+The transformation from this static bound to a working one-shot KE primitive requires the legitimate parties to operate in a fundamentally different regime --- one in which the static asymmetry is not the operative event but the foundation on which an iterative, dynamic system is built. The next section makes this transformation explicit.
+
+\medskip
+\noindent\textit{Birthday paradox describes a static state. Grata Cascade builds a dynamic system on top of it.}
+
+\section{From Static to Dynamic: Design Choices}\label{sec:transformation}
+
+\subsection{The Transformation Problem}
+
+The static birthday bound (Section~\ref{sec:static}) presents a fundamental obstacle for naive construction: with $k \ll n$, the probability that two parties' independent selections share an element is negligible. A direct ``pick and reveal'' protocol cannot work --- the parties simply will not have anything to share most of the time.
+
+Yet the asymmetry $R \approx n/k$ tells us that \emph{if} legitimate parties could find their intersection element, an adversary attempting the same task would be at a disadvantage of factor $n/k$. The transformation problem is: how to construct a public communication protocol that allows A and B to identify and agree on intersection elements (or derived material), \emph{without revealing those elements to a passive observer}.
+
+This problem decomposes into three sub-problems:
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Communication about the intersection without revelation.} Parties must exchange information sufficient to identify shared elements without leaking the elements themselves to the public channel.
+\item \textbf{Adversary remains at the static bound.} The adversary observing the channel must not be able to convert their access into a position better than the static $R$ ratio. Each round of communication must preserve the asymmetry, not erode it.
+\item \textbf{Final key derivation requires intersection knowledge.} The resulting cryptographic key must be derivable only from the intersection elements themselves, not merely from signals that leak through the channel.
+\end{enumerate}
+
+Grata Cascade addresses these three sub-problems through four specific design choices, each with cryptographic justification.
+
+\subsection{Design Choice 1: Hash Addressing as Deterministic Communication}
+
+The first sub-problem (communication without revelation) is solved by replacing random selection with \emph{deterministic addressing through hash functions}. Party A computes hashes of all vectors in its private set $\mathcal{V}_A$ and transmits these hash prefixes publicly. Party B searches its own set $\mathcal{V}_B$ for vectors whose hashes match those received --- thereby identifying intersection candidates without ever transmitting the vectors themselves.
+
+This realises the foundational insight: hash functions are \emph{one-way commitments}. The transmitter binds itself to specific vectors (cannot retroactively change them) without revealing them. The receiver can verify intersection (does my vector hash to what was transmitted?) without learning anything about non-intersecting vectors of the transmitter.
+
+The role of \emph{hash truncation} is to control the filter strength. A full $32$-byte SHA-256 output would create essentially no false-positive matches; a single-byte prefix would create many. By tuning $h_{AB}$, $h_{BA}$, $h_P$ (hash prefix lengths in bytes for the three protocol stages), the construction balances:
+\begin{itemize}[leftmargin=*]
+\item \emph{Convergence rate}: shorter prefixes allow more candidate matches per round, faster convergence;
+\item \emph{Adversarial work}: longer prefixes raise the cumulative preimage barrier $\lambda_\text{preimage} = 8(h_{AB} + h_{BA} + h_P)$;
+\item \emph{Bandwidth}: each prefix byte costs $N$ bytes per round on the A$\to$B channel.
+\end{itemize}
+
+This design connects to the Merkle puzzles tradition~\cite{Merkle1978}: key agreement using only a public hash function, where honest parties perform $O(N)$ work and adversaries face $\Theta(N^2)$ work. Impagliazzo and Rudich~\cite{IR1989} proved $\Theta(N^2)$ is optimal in the random oracle model for key exchange without trapdoor functions. Grata Cascade fits this lineage but, through the additional design choices below, conjecturally pushes adversarial work beyond $O(N^2)$.
+
+\subsection{Design Choice 2: Random Vector $R_t$ as Drift Source}
+
+The second sub-problem (preserving asymmetry across rounds) requires a mechanism to update internal state in a way that remains synchronised between A and B but unpredictable for the adversary's strategy. Grata Cascade introduces a \emph{public random vector} $R_t$ injected each round. Both parties incorporate $R_t$ into their internal probability distributions identically (same public input, same update rule), but each party maintains its own \emph{private} pool of vectors that evolve under that distribution.
+
+The result is a \emph{synchronised drift}: A and B converge on the same probability landscape, while their concrete vector samples within that landscape diverge. The adversary observes the public sequence $(R_1, R_2, \ldots)$ and can reconstruct the distribution exactly --- but cannot determine \emph{which specific vectors} A and B updated in any given round (because the update is probabilistic with $p_\text{upd} < 1$).
+
+This realises a subtle but powerful asymmetry: identical distributional knowledge between all parties, but divergent knowledge of specific vector trajectories.
+
+\subsection{Design Choice 3: Vector Update Rule (TPM Adaptation Inspiration)}
+
+The vector update rule itself draws inspiration from the Tree Parity Machine~\cite{KKK2002} adaptation phase, in which two communicating neural networks adjust their weights based on shared output to achieve synchronisation. The TPM construction was ultimately shown to be vulnerable to a geometric attack~\cite{KMS2003}: the synchronisation process leaks gradient information about the weights, enabling the adversary to reconstruct them.
+
+Grata Cascade draws structural inspiration from TPM's iterative adaptation phase but \emph{differs fundamentally} in the leakage mechanism. There is no neural network, no bidirectional learning rule, and no gradient information transmitted. Instead, the update rule is:
+\[
+v_i \gets \begin{cases} v_i + R_i - 128 & \text{if } 0 \leq v_i + R_i - 128 \leq 255, \\ R_i & \text{otherwise (overflow branch)}. \end{cases}
+\]
+Each party applies this rule independently to its own vectors, with the random vector $R_t$ as the only shared input. The probabilistic update ($p_\text{upd} < 1$ per vector per round) means that the adversary, even knowing $R_t$ exactly, cannot determine \emph{which} vectors each party updated. This is structurally different from the TPM weakness: the adversary has no observation of which units were synchronised in any given round.
+
+Grata Cascade is not a TPM variant; it is a novel construction drawing structural inspiration from TPM's adaptation phase while addressing the geometric weakness.
+
+\subsection{Design Choice 4: AES Key Derivation from Intersection Vectors}
+
+The third sub-problem (key derivation requiring intersection knowledge) is solved by deriving the final key as $K^* = H(v_{\pi(1)} \Vert \cdots \Vert v_{\pi(M)})$, where the $v_{\pi(i)}$ are the lexicographically-sorted intersection vectors. AES is used in CBC mode with \texttt{PaddingMode.None} for transmitting per-round seeds; the absence of padding eliminates any validation oracle (attempted decryption with an incorrect key produces $L$ bytes of pseudo-random data, indistinguishable from successful decryption).
+
+This realises the requirement that key knowledge requires intersection knowledge: an adversary who guesses the hash structure but does not actually know the underlying vectors cannot derive $K^*$, and cannot verify candidate guesses without independently confirming all $M$ password vectors --- a problem that returns to the cumulative preimage barrier.
+
+\subsection{The Combined Dynamic System}
+
+These four design choices --- hash addressing, random vector drift, TPM-inspired vector adaptation, and AES key derivation --- together transform the static birthday-bound asymmetry into a dynamic, convergent system. The legitimate parties achieve guaranteed convergence (empirically $100\%$ over $10^6$ runs) where the static birthday model predicts negligible $P_2$. The adversary remains constrained by the static asymmetry, observing only that the parties found something --- without the synchronised internal state required to identify what.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+Aspect & Static (Birthday) & Dynamic (Grata Cascade) \\
+\midrule
+Selection & Random in single step & Iterative, drift-guided \\
+Universe & Fixed $|U| = n$ & Effectively narrowed by Stat \\
+Party correlation & None & Synchronised via shared $R_t$ \\
+Goal & Set intersection & Specific hash-hit sequence \\
+Adversary position & Third party in same game & Observer without coherent state \\
+\bottomrule
+\end{tabular}
+\caption{Static birthday model versus dynamic Grata Cascade system. The dynamic mechanisms strengthen but do not violate the static foundation.}
+\label{tab:static-vs-dynamic}
+\end{table}
+
+The static asymmetry $R \approx n/k$ from Theorem~\ref{thm:asymmetry} provides the \emph{lower bound} for legitimate-versus-adversary advantage in Grata Cascade. The dynamic mechanisms strengthen this bound; quantitative formalisation of this strengthening remains Open Problem~\ref{prob:dynamic-formal}.
+
+\paragraph{Related lineage.} Beyond TPM and Merkle puzzles, Grata Cascade draws on the broader tradition of deriving keys from shared structural information. Fuzzy commitment schemes~\cite{JW1999} and fuzzy extractors~\cite{Dodis2004} derive keys from noisy shared observations of a common quantity. Grata Cascade shares the principle of deriving keys from a \emph{distribution}, but the distribution here is constructed interactively during the protocol rather than derived from prior shared observation. The continuous key agreement (CKA) framework was formalised by Alwen, Coretti, and Dodis~\cite{ACD19}, and post-quantum CKA based on KEM was published in the Triple Ratchet (SPQR) project~\cite{SPQR2025}. Grata Cascade differs from SPQR in cryptographic assumption (preimage resistance only, no lattices) and in state character (structured probability distribution rather than KEM parameters).
+
+\section{Grata Cascade: Concrete Implementation}\label{sec:concrete}
+
+This section specifies the Grata Cascade protocol, its parameters, the round structure, and the parametric family. The four design choices from Section~\ref{sec:transformation} (hash addressing, random vector drift, vector update with TPM-inspired adaptation, AES key derivation) are realised here in concrete form.
+
+\subsection{Parameters}
+
+Table~\ref{tab:params} lists the protocol parameters. Grata Cascade forms a parametric family: specific values are chosen by the user to achieve desired properties. The \emph{reference configuration} (Table~\ref{tab:params}, middle column) is used for empirical evaluation in Section~\ref{sec:empirical}. Values in bold are empirically calibrated through systematic sweeps documented in Section~\ref{sec:empirical}.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+Symbol & Description & Reference value & Operational range \\
+\midrule
+$L$ & vector length (bytes) & 32 & 4--64 \\
+$N$ & vectors per party & 4096 & 64--65536 \\
+$h_{AB}$ & A$\to$B hash length (bytes) & 5 & 1--16 \\
+$h_{BA}$ & B$\to$A hash length (bytes) & 2 & 1--8 \\
+$h_P$ & password hash length (bytes) & \textbf{8} & 1--16 \\
+$M$ & number of password candidates & \textbf{8} & 1--64 \\
+$s$ & seed perturbation range ($\pm s$) & \textbf{4} & $[1, 30]$ (validated) \\
+$p_\text{upd}$ & update probability & \textbf{0{,}75} & $[0{,}6, 1{,}0]$ \\
+$\tau$ & termination threshold ($\log_2$) & $-512$ & $-1024$ to $-256$ \\
+$\theta_{\text{cut}}$ & pool rejection threshold ($\log_2$) & $-8$ & $-256$ to $0$ \\
+$\theta_{\text{cand}}$ & candidate rejection threshold ($\log_2$) & \textbf{$-8$} (disabled) & $-256$ to $0$ \\
+$\text{MaxIter}$ & per-run iteration cap & \textbf{500} & $1$--$10^5$ \\
+\bottomrule
+\end{tabular}
+\caption{Parameters of Grata Cascade reference v2 (post 2026-05-02). Bold values are calibrated under the v2 baseline. The $p_\text{upd}$ range $[0{,}6, 1{,}0]$ is enforced at configuration load: below $0{,}6$ the protocol fails to converge; above $0{,}95$ Stat distribution collapse demands $\theta_{\text{cand}}$ relaxation. The $s$ range $[1, 30]$ is empirically validated for convergence invariance (Section~\ref{sec:empirical}). The candidate threshold $\theta_{\text{cand}} = -8$ in the reference equals $\theta_{\text{cut}}$ and therefore disables the filter (the consistency constraint is $\theta_{\text{cut}} \geq \theta_{\text{cand}}$); enabling the filter (e.g., $\theta_{\text{cand}} = -95$, the F4 v1 calibrated optimum) is a configurable Tier-3 defense (Section~\ref{sec:cand-threshold}).}
+\label{tab:params}
+\end{table}
+
+\subsection{Notation}
+
+\begin{itemize}[leftmargin=*]
+\item $\mathcal{V}_A, \mathcal{V}_B$: private vector sets $v \in \{0,\ldots,255\}^L$ on sides A and B.
+\item $H(\cdot)$: SHA-256 hash function.
+\item $H[a\mathord{:}b](\cdot)$: bytes $a$ through $b-1$ of the hash output.
+\item $R$: public random vector exchanged each round.
+\item $\mathrm{AES}_{K}(m)$: AES-256-CBC encryption of $m$ under key $K$, with \texttt{PaddingMode.None}.
+\item $\mathcal{S}_A, \mathcal{S}_B$: statistical tables maintained by each party (Section~\ref{sec:drift}).
+\end{itemize}
+
+\subsection{Initialisation and Round Structure}
+
+Both parties independently generate $N$ uniformly random vectors of length $L$ using a cryptographically-secure PRNG (\texttt{System.Security.Cryptography.RandomNumberGenerator}); statistical tables are initialised to uniform.
+
+Round $t$ proceeds as follows:
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{A$\to$B hash transmission.} A computes and sends hash prefixes $\{H[0{:}h_{AB}](v) : v \in \mathcal{V}_A\}$.
+
+\item \textbf{B's collision search and candidate selection.} B finds vectors in $\mathcal{V}_B$ whose hash prefixes match those received, sorts these collision candidates by $\mathcal{S}_B$-probability ascending (lowest probability first --- inverse-probability selection per Section~\ref{sec:drift}), filters by threshold $\theta_{\text{cand}}$, and selects the first $M$ candidates. From these, lexicographically sorted, B computes the per-round AES key $K_t = H(v_{\pi(1)} \Vert \cdots \Vert v_{\pi(M)})$, generates a fresh seed $\sigma_t$, and transmits to A: the public random vector $R$, the AES ciphertext $\mathrm{AES}_{K_t}(\sigma_t)$, and the B$\to$A hash prefixes $\{H[h_{AB}{:}h_{AB}+h_{BA}](v) : v \in \text{candidates}\}$.
+
+\item \textbf{A's candidate enumeration and decryption.} A enumerates combinations of $\mathcal{V}_A$ vectors matching the received B$\to$A hash prefixes. For each candidate combination, A reconstructs the candidate $K_t$, attempts AES decryption, and accepts the result as a candidate seed (the absence of padding means decryption always ``succeeds'' syntactically; semantic validation comes later).
+
+\item \textbf{Stat update and pool refresh.} Both parties update $\mathcal{S}$ with $R$ (deterministic from the public random vector). Each vector in the pool is independently updated with probability $p_\text{upd}$. The vector pool is then refilled from candidate/own seeds with $\pm s$ perturbation, filtered by $\theta_{\text{cut}}$ to reject over-typical vectors.
+
+\item \textbf{Termination.} B maintains an accumulated password vector list $\mathcal{P}$. When the cumulative log-probability $\sum_{v \in \mathcal{P}} \log_2 \Pr_{\mathcal{S}_B}(v) < \tau$, B sends the Final message containing $\{H[h_{AB}+h_{BA}{:}h_{AB}+h_{BA}+h_P](v) : v \in \mathcal{P}\}$. A enumerates corresponding password vectors from its candidate seeds; the final shared key is $K^* = H(v_{\pi(1)} \Vert \cdots \Vert v_{\pi(|\mathcal{P}|)})$.
+\end{enumerate}
+
+\subsection{Threat Model and Scope}
+
+We consider a \emph{passive adversary} $\mathcal{E}$ with read access to the complete public transcript of one session: all $R_t$, all A$\to$B hash sequences, all B$\to$A messages including AES ciphertexts, all Final messages. $\mathcal{E}$ has probabilistic polynomial time (PPT) computational resources and seeks to compute the final key $K^*$ or distinguish $K^*$ from uniform random in the standard key-indistinguishability game for a one-shot KE primitive (analogous to the CKA distinguishing game of~\cite{ACD19} restricted to a single key).
+
+\textbf{Scope limitation: active adversary.} An active network adversary capable of modifying messages in transit is outside the scope of this protocol. Grata Cascade is designed for deployment inside an authenticated transport (TLS, Noise framework), where message integrity and peer authentication are provided by the transport layer. An active adversary capable of bypassing transport authentication has strictly greater access than what specific protocol-level attacks could exploit. Optional defense-in-depth mechanisms for deployments lacking authenticated transport are sketched in Appendix~\ref{app:optional-defenses}.
+
+\subsection{Analytical Relations}
+
+Four quantitative relations characterise the parametric family:
+
+\paragraph{Preimage barrier.} The bit-length of the cumulative hash constraint on a final password vector is $\lambda_{\text{preimage}} = 8 \cdot (h_{AB} + h_{BA} + h_P)$. Under SHA-256 as a random oracle (Theorem~\ref{thm:preimage}), finding a valid preimage requires $2^{\lambda_{\text{preimage}}}$ hash evaluations. For the reference v2: $\lambda_{\text{preimage}} = 8 \cdot (5 + 2 + 8) = 120$ bits.
+
+\paragraph{Indistinguishable set size.} The number of vectors $u \in \{0,\ldots,255\}^L$ satisfying the full preimage filter for a given password vector $v$ is $\approx 2^{8L - \lambda_{\text{preimage}}}$. For the reference v2: $2^{256 - 120} = 2^{136}$ vectors. This is not a bound on adversarial work --- a single satisfying vector can be found in $2^{\lambda_{\text{preimage}}}$ hashes. It is instead a \emph{designed floor on adversarial ambiguity}: any adversary who bypasses the preimage filter obtains at most $1$ correct candidate out of $2^{136}$ indistinguishable survivors. Combined with AES-CBC NoPadding absence of validation oracle (Section~\ref{sec:aes}), this set size is the flooding defense.
+
+\paragraph{Pool density barrier.} The relative density of pool vectors in near-seed space is $\rho_{\text{pool}} = N / (2s+1)^L$. For the reference v2 ($s = 4$): $\rho = 2^{12}/9^{32} \approx 2^{-89}$. Note the asymmetry: $L$ has exponential influence while $N$ has linear influence.
+
+\paragraph{Foundational asymmetry per profile.} From Theorem~\ref{thm:asymmetry}, the static asymmetry ratio is $R \approx |U|/k$ where $|U| = 2^{8L}$ is the universe and $k = N$ is the per-party set size. This quantifies the structural advantage of legitimate parties over adversaries before any dynamic strengthening (see column $\log_2 R$ in Table~\ref{tab:profiles}).
+
+\paragraph{Bandwidth per round.} Approximate transcript size of one round is $B_{\text{round}} \approx L + N \cdot h_{AB} + M \cdot h_{BA} + L$ bytes, dominated by A$\to$B hashes. For the reference: $\approx 20{,}5$ KB.
+
+\paragraph{Memory footprint.} State size per party is $S_{\text{state}} = N \cdot L + 256 \cdot L$ bytes. For the reference: $\approx 136$ KB.
+
+\subsection{Three Hash Design Rationale}\label{sec:rationale}
+
+The three hash prefix lengths $h_{AB}$, $h_{BA}$, $h_P$ are not merely calibration knobs with a shared ``security'' semantic. Each serves a distinct design rationale, and their optimal values are derived from qualitatively different constraints.
+
+\paragraph{$h_{AB}$: Correctness floor against false collisions.} Party B identifies candidate password vectors by finding matches between its own hash prefixes and those received from A. If $h_{AB}$ is too short, random vectors in $\mathcal{V}_B$ will spuriously match A's hashes (without corresponding to a true intersection), causing B to build seeds and passwords on false premises --- a \emph{silent protocol failure} with no recovery. The expected false-collision count per round is
+\[
+\mathbb{E}[\text{false collisions}/\text{round}] = \frac{N^2}{2^{8 h_{AB}}}.
+\]
+For the reference ($N = 4096$, $h_{AB} = 5$): $2^{24}/2^{40} = 2^{-16} \approx 1{,}5 \cdot 10^{-5}$ per round. The calibration rule is
+\[
+h_{AB} \geq \left\lceil \frac{2 \log_2 N + 8}{8} \right\rceil,
+\]
+with the $+8$ bit margin giving roughly $10^{-4}$ per-round false-collision rate --- acceptable for production at protocol scale ($\sim 50$ rounds per convergence).
+
+$h_{AB}$ is therefore a \emph{protocol correctness parameter}, not an adversarial-security parameter: adversaries cannot leverage false B-collisions for their own attacks (they lack private access to $\mathcal{V}_B$), but B's protocol execution breaks without this floor. Shorter $h_{AB}$ gains bandwidth at the cost of silent correctness failures; the calibration target is the minimum yielding acceptable failure rate.
+
+\paragraph{$h_{BA}$: Flooding defense through designed indistinguishability.} The B$\to$A hash $h_{BA}$ functions inversely from $h_{AB}$: shorter is better for adversarial resistance. Each bit of $h_{BA}$ added to the per-round filter reduces the indistinguishable set size by a factor of $2$, shrinking the flooding defense. The design objective is to keep $h_{BA}$ minimal while contributing to the overall preimage budget. The reference $h_{BA} = 2$ bytes contributes $16$ bits to $\lambda_\text{preimage}$; any shorter value would drop below the minimum informational requirement of the B$\to$A channel; any longer value would reduce the flooding defense below structural need.
+
+The contrast with $h_{AB}$ rationale is stark: $h_{AB}$ is a \emph{correctness floor} (increase until false collisions are negligible), whereas $h_{BA}$ is a \emph{flooding ceiling} (keep as low as budget allows). These are opposite optimisation directions.
+
+\paragraph{$h_P$: Cross-round synchronization threshold.} The Final message hash $h_P$ has a distinct role: it is the \emph{only global identifier} for the password set $\mathcal{P}$ accumulated across all rounds of a session. At the end of the protocol, A receives $|\mathcal{P}|$ Final hashes and must identify which of its many candidate vectors (extracted from AES decryption across $T \approx 50$-$100$ rounds) correspond to which password slots. The search space on A's side is the accumulated candidate pool $C_\text{total} \approx T \cdot M \approx 800$ vectors. For each Final hash, a spurious match would result in silent key mismatch:
+\[
+\mathbb{E}[\text{silent mismatch}/\text{session}] \approx |\mathcal{P}| \cdot C_\text{total} \cdot 2^{-8 h_P}.
+\]
+For $h_P = 8$ bytes and $|\mathcal{P}| = M = 8$, $C_\text{total} \approx T \cdot M \approx 400$ (with reference v2 iter median $T \approx 49$): $8 \cdot 400 \cdot 2^{-64} \approx 1{,}7 \cdot 10^{-16}$. This is well below the production-scale target ($\sim 10^{-9}$) cited by Signal and WhatsApp as deployment prerequisites for silent key collision rates. The empirical residual key-mismatch rate observed at $5 \times 10^4$ runs is $\sim 8 \cdot 10^{-5}$, consistent with $h_{AB}$-collision (40-bit) becoming the dominant divergence source after $h_P$ was strengthened (see Section~\ref{sec:empirical-convergence}).
+
+Unlike $h_{AB}$ (protects per-round correctness) and $h_{BA}$ (protects flooding defense), $h_P$ protects \emph{cross-round protocol synchronization}. It is the cumulative correctness parameter, calibrated against the accumulated state of the entire session.
+
+\paragraph{Summary.} The three hash prefix lengths serve orthogonal purposes: $h_{AB}$ enforces per-round correctness (scales with $N$), $h_{BA}$ enforces flooding defense (kept minimal for given $\lambda_\text{preimage}$), $h_P$ enforces cross-round correctness (scales with session length $T$ and candidate accumulation). All three contribute additively to $\lambda_\text{preimage}$, but their individual calibration drivers are qualitatively distinct. Table~\ref{tab:profiles} values reflect this per-hash rationale.
+
+\subsection{Parametric Profiles}\label{sec:profiles}
+
+Table~\ref{tab:profiles} lists three production parametric profiles, re-calibrated according to the three hash design rationale introduced in Section~\ref{sec:rationale}. Three additional research parameter families (IoT, PQ128, Break-Demo) are formulated as Open Problems~\ref{prob:iot}, \ref{prob:pq128}, and \ref{prob:breakdemo}. The $\log_2 R$ column quantifies the static birthday-bound asymmetry per profile. The flooding set column quantifies the size of the indistinguishable candidate set above the preimage barrier (Section~\ref{sec:aes}).
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrrrrrl}
+\toprule
+Profile & $L$ & $N$ & $h_{AB}$ & $h_{BA}$ & $h_P$ & $M$ & $\lambda_\text{preimage}$ & Flooding set & $\log_2 R$ \\
+\midrule
+Reference v2 & 32 & 4096 & 5 & 2 & 8 & 8 & 120 & $2^{136}$ & 244 \\
+Mobile (target) & 32 & 1024 & 5 & 2 & 8 & 4 & 120 & $2^{136}$ & 246 \\
+HighSec (target) & 32 & 8192 & 6 & 3 & 8 & 8 & 136 & $2^{120}$ & 243 \\
+\bottomrule
+\end{tabular}
+\caption{Reference v2 baseline plus two production profile targets, with per-hash design rationale: $h_{AB}$ calibrated as correctness floor for expected false-collision rate $\sim 10^{-5}$ per round, $h_{BA}$ minimal for flooding defense and $\lambda_\text{preimage}$ contribution, $h_P$ calibrated for cross-round synchronization reliability at production scale (Reference v2 silent mismatch $\sim 10^{-16}$ per session, far below the $10^{-9}$ deployment target). All profiles use $s = 4$, $p_\text{upd} = 0{,}75$, $\theta_{\text{cut}} = -8$, $\theta_{\text{cand}}$ disabled by default. Status: Reference v2 fully empirically validated; Mobile and HighSec are profile targets pending empirical re-derivation.}
+\label{tab:profiles}
+\end{table}
+
+The Reference v2 configuration is the primary subject of empirical evaluation in Section~\ref{sec:empirical}. Mobile is intended for bandwidth-constrained deployments with reduced $N$ and $M$ but identical preimage barrier. HighSec trades higher bandwidth for a stronger preimage barrier ($\lambda_\text{preimage} = 136$ bits). The $\log_2 R$ values illustrate static birthday-bound asymmetry across the production family: all within the same order of magnitude due to shared $L = 32$ universe size.
+
+\section{Statistical Drift as Adversarial Defense}\label{sec:drift}
+
+This section examines the statistical drift mechanism --- the second design choice from Section~\ref{sec:transformation} --- as a concrete defense against passive adversaries. Drift addresses what we identify as the geometric weakness of the historical Tree Parity Machine: its synchronisation phase leaks gradient information, allowing the adversary to reconstruct private state. Grata Cascade's drift mechanism deliberately avoids this leakage path while preserving the structural insight that iterative public communication can drive synchronisation.
+
+\subsection{The Statistical Distribution $\mathcal{S}$}\label{sec:stat}
+
+Each party maintains a table $\mathcal{S}$ with, for each position $i \in \{1, \ldots, L\}$, a probability vector $(p_i(0), \ldots, p_i(255))$. Initially $p_i(x) = 1/256$ for all $x$ (uniform). Upon receiving the public random vector $R$, the update shifts each column by $R_i - 128$ (with clamping at the byte boundaries) and combines in a weighted sum:
+\[
+p_i'(x) = p_\text{upd} \cdot p_i(x) + (1 - p_\text{upd}) \cdot \tilde{p}_i(x),
+\]
+where $\tilde{p}_i$ is the shifted distribution. The probability of a vector under $\mathcal{S}$ is then $\Pr_\mathcal{S}(v) = \prod_{i=1}^{L} p_i(v_i)$.
+
+\begin{observation}\label{obs:public-stat}
+$\mathcal{S}$ is a deterministic function of the public sequence $(R_1, R_2, \ldots, R_t)$ and the (publicly-known) initial conditions. An adversary observing the transcript can reconstruct $\mathcal{S}$ exactly. What the adversary does \emph{not} know is \emph{which specific vectors} A and B actually updated in any given round (since each vector is updated only with probability $p_\text{upd} < 1$). This creates an asymmetry between identical distributional knowledge (shared between all parties) and divergent knowledge of concrete vector trajectories (private to each party).
+\end{observation}
+
+\subsection{Inverse-Probability Candidate Selection}\label{sec:selection}
+
+When B selects password candidates from the collision set, it sorts by $\mathcal{S}_B$-probability ascending and selects the first $M$ --- the candidates with \emph{lowest} probability under the shared distribution. The intuition: high-probability vectors lie in the ``typical'' region of the distribution and could be generated by an adversary via direct sampling from the reconstructed $\mathcal{S}$; low-probability (tail) vectors require exponentially many attempts to sample.
+
+The threshold $\theta_{\text{cand}}$ further restricts candidates: vectors with $\log_2 \Pr_\mathcal{S}(v) > \theta_{\text{cand}}$ are excluded from selection, regardless of their hash collision status. This filter is the candidate-side defense against Stat concentration scenarios discussed in Section~\ref{sec:cand-threshold}.
+
+\subsection{Update Probability: Calibrated Operational Range}\label{sec:p-upd}
+
+The parameter $p_\text{upd}$ governs the rate at which $\mathcal{S}$ concentrates over rounds. Empirical sweeps on reference v1 (Section~\ref{sec:empirical-pupd}) reveal that $p_\text{upd}$ has a constrained operating range $[0{,}6, 1{,}0]$ (lower bound calibrated, upper bound subject to a coupling with $\theta_{\text{cand}}$, see Section~\ref{sec:cand-threshold}):
+
+\begin{itemize}[leftmargin=*]
+\item $p_\text{upd} \leq 0{,}5$: drift forms too slowly. After typical convergence horizons ($\sim 50$--$100$ rounds), $\mathcal{S}$ remains too close to uniform for tail-selection to provide meaningful candidate differentiation; the protocol fails to converge.
+\item $p_\text{upd} = 0{,}75$ (reference v2): empirically optimal sweet spot. Convergence in $\approx 49$ rounds median (reference v2 baseline at $5 \times 10^4$ runs), $\mathcal{S}$ preserves near-uniform entropy.
+\item $p_\text{upd} \geq 0{,}95$: $\mathcal{S}$ collapses toward a delta distribution. With $\theta_{\text{cand}}$ enabled at the v1-style $-95$, this collapse starves the candidate pool. With $\theta_{\text{cand}}$ at the reference v2 default ($-8$, disabled) the protocol still converges at $p_\text{upd} = 1{,}0$ but loses its structural concentration of candidates in the distributional tail.
+\end{itemize}
+
+The reference value $p_\text{upd} = 0{,}75$ is the result of empirical calibration. Values outside $[0{,}6, 1{,}0]$ are rejected at configuration load time; the upper bound was extended from $0{,}95$ to $1{,}0$ in reference v2 to allow the F8 crack-point analysis (Section~\ref{sec:open}) to operate at the Stat-collapse regime without altering the reference baseline.
+
+\subsection{Candidate Rejection Threshold as Configurable Tier-3 Defense}\label{sec:cand-threshold}
+
+The threshold $\theta_{\text{cand}}$ filters B's password candidates: only vectors with $\log_2 \Pr_\mathcal{S}(v) \leq \theta_{\text{cand}}$ qualify. The reference v2 default is $\theta_{\text{cand}} = \theta_{\text{cut}} = -8$, which (under the consistency constraint $\theta_{\text{cut}} \geq \theta_{\text{cand}}$) places the threshold equal to the loosest possible filter and effectively \emph{disables} candidate filtering in the reference. Reference v2 thus relies on Stat drift to structurally place candidates in the tail without filter intervention --- empirical validation (Section~\ref{sec:empirical}) shows full convergence and full attacker resistance with the filter disabled.
+
+The filter is exposed as a \emph{configurable Tier-3 structural defense}: deployments under heightened threat models (or non-default parameter regimes that cause Stat concentration) can tighten $\theta_{\text{cand}}$ to enforce a strict tail-selection. The empirically calibrated optimum on reference v1 was $\theta_{\text{cand}} = -95$, at which approximately $10\%$ of rounds resulted in fewer than $M$ surviving candidates and were skipped, raising convergence iteration count modestly without breaking convergence. Earlier ablation~\cite{F4Calibration} reported that disabling the filter at $p_\text{upd} = 1{,}0$ caused candidate log-probability to rise from $-165$ (filtered) to $-53$ (unfiltered, collapsed Stat) --- a shift corresponding to substantial loss of structural concentration. Tier-3 deployments under such regimes should re-enable the filter; reference v2 demonstrates that under the calibrated $p_\text{upd} = 0{,}75$, the filter is not required.
+
+For non-reference parametric profiles, $\theta_{\text{cand}}$ (when enabled) requires independent calibration: the natural distribution of candidate log-probabilities scales linearly with $L$ (approximately $-5$ bits per byte; e.g., $\sim -75$ for $L = 16$, $\sim -165$ for $L = 32$, $\sim -322$ for $L = 64$).
+
+\subsection{Pool Rejection Threshold}
+
+The threshold $\theta_{\text{cut}}$ rejects pool vectors with $\log_2 \Pr_\mathcal{S}(v) > \theta_{\text{cut}}$ during vector regeneration. On the reference configuration this threshold is structurally inactive: uniformly random generated vectors have $\log_2 \Pr_\mathcal{S} \approx -256$, far below any realistic threshold. Empirical validation across the full $p_\text{upd}$ range confirms zero rejections at the reference (Section~\ref{sec:empirical-pupd}).
+
+The threshold serves as a \emph{parametric family safety contract}: smaller-dimensional configurations (e.g., $L = 16$) produce pool vectors with higher probability under Stat (typically $\log_2 \Pr \in [-120, -80]$), at which point $\theta_{\text{cut}}$ would become active. The default $\theta_{\text{cut}} = -8$ remains across profiles as inactive on the reference, becoming structurally activated only where parametric scaling demands it.
+
+\subsection{Why Drift Addresses the TPM Weakness}\label{sec:tpm-weakness}
+
+The Tree Parity Machine~\cite{KKK2002} achieves shared-key derivation through two neural networks performing bidirectional learning. The geometric attack of Klimov, Mityagin, and Shamir~\cite{KMS2003} exploits the synchronisation phase: as the networks adjust their internal weights to match outputs, the gradient information leaks through the public output sequence, allowing the adversary to reconstruct the weights with probability that grows exponentially with the number of synchronisation rounds.
+
+Grata Cascade's statistical drift differs structurally:
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{No bidirectional gradient information.} The update rule is unidirectional: each party applies the same deterministic update $p_i' = p_\text{upd} \cdot p_i + (1-p_\text{upd}) \cdot \tilde{p}_i$ based on the public $R$. There is no ``learning rule'' adjusting state based on output mismatch.
+\item \textbf{Public-input determinism plus private trajectory randomness.} The distribution $\mathcal{S}$ is publicly reconstructable (Observation~\ref{obs:public-stat}), but \emph{which vectors} were updated remains private. The TPM weakness was that the synchronisation outputs leaked which weights were synchronised; here, the leaked information ($\mathcal{S}$) explicitly does \emph{not} include vector-trajectory information.
+\item \textbf{Empirical validation.} Section~\ref{sec:empirical-attackers} reports zero discriminative power for the B.4 AES-Oracle adversary across $2{,}2 \cdot 10^{10}$ queries, with Cohen's $d = 0{,}002$. Section~\ref{sec:empirical-seed} extends this to densified pool conditions ($s = 1$ giving $\rho \approx 2^{-38}$, $39$ bits denser than reference) with no detectable signal. The geometric reconstruction path that defeated TPM has no empirical counterpart in Grata Cascade.
+\end{itemize}
+
+This does not constitute a formal proof of TPM-style attack resistance; it constitutes a \emph{structural argument} that the leakage path exploited in TPM is absent here, supported by extensive empirical evaluation. Formalisation of resistance against TPM-style attacks remains within the scope of Open Problem~\ref{prob:dynamic-formal}.
+
+\section{AES-CBC NoPadding as Flooding Defense}\label{sec:aes}
+
+This section examines the role of AES key derivation --- the fourth design choice from Section~\ref{sec:transformation} --- as a defense against adversaries with arbitrary computational budgets. The structural argument is: even an adversary capable of generating astronomically large vector pools cannot convert raw computational power into cryptographic information without defeating the AES key derivation, which itself reduces to the cumulative preimage barrier of Section~\ref{sec:concrete}.
+
+\subsection{AES Key Derivation from Password Vectors}
+
+The per-round AES key is derived as
+\[
+K_t = H(v_{\pi(1)} \Vert v_{\pi(2)} \Vert \cdots \Vert v_{\pi(M)}),
+\]
+where $H$ is SHA-256, the $v_{\pi(i)}$ are the lexicographically-sorted password candidates (Section~\ref{sec:concrete}), and $M$ is the number of password vectors per round. Both parties derive the same $K_t$ if and only if they agree on the same candidate set --- the correctness condition for protocol convergence.
+
+The lexicographic sorting is essential for synchronisation: without canonical ordering, parties might select the same set in different orders, deriving different keys.
+
+\subsection{PaddingMode.None: Absence of a Validation Oracle}
+
+AES is used in CBC mode with \texttt{PaddingMode.None}. This is a deliberate cryptographic design choice: with no padding, decryption with an incorrect key produces $L$ bytes of pseudo-random output that is structurally indistinguishable from the output of correct decryption. There is no syntactic check (e.g., padding validation) that the adversary could exploit as a validation oracle.
+
+For the adversary, this means: given a candidate $K_t'$ (constructed from guessed password vectors), AES decryption of an intercepted ciphertext yields some 32-byte sequence. Without an external check (e.g., subsequent hash matching in the next round), the adversary cannot distinguish a correct guess from an incorrect one. The adversary's only recourse is to verify candidate seeds against subsequent round transcripts --- which requires the adversary to also possess the correct password vectors.
+
+\subsection{Adversary with Large Pool: Indistinguishable Candidate Seeds}\label{sec:flooding}
+
+Consider an adversary $\mathcal{E}$ with vector pool of size $P$, attempting to traverse the protocol's hash filter cascade. The expected number of stage-b survivors (pool vectors passing both A$\to$B and B$\to$A filter prefixes) is:
+\[
+E[\text{stage-b}] = P \cdot N \cdot M / 2^{8(h_{AB} + h_{BA})}.
+\]
+For the reference v2 configuration ($N = 4096$, $M = 8$, $h_{AB} + h_{BA} = 7$ bytes $= 56$ bits):
+
+\begin{itemize}[leftmargin=*]
+\item $P = 2 \cdot 10^{12}$: expected $\approx 1$ stage-b survivor.
+\item $P = 2 \cdot 10^{15}$: expected $\approx 2^{10} = 1024$ stage-b survivors.
+\item $P = 2 \cdot 10^{18}$: expected $\approx 2^{20} = 10^{6}$ stage-b survivors.
+\end{itemize}
+
+For each stage-b survivor, the adversary attempts AES decryption, obtaining a candidate seed $\sigma'$. With \texttt{PaddingMode.None} and incorrect $K_t'$, $\sigma'$ is statistically indistinguishable from random bytes. The adversary thus obtains a number of candidate seeds equal to the stage-b survivor count, all indistinguishable.
+
+\paragraph{The flooding observation.} Increasing $P$ does not increase the adversary's \emph{information}; it only increases the \emph{noise}. Each additional stage-b survivor adds another candidate seed to the indistinguishable pool, but provides no signal indicating which (if any) seed is correct. The adversary's pool scaling yields linear growth in candidate count, exponential growth in compute cost, and zero growth in actionable information.
+
+\subsection{Why Short $h_{BA}$ is a Design Feature}
+
+The B$\to$A hash length $h_{BA} = 2$ bytes is intentionally short. This is counterintuitive --- naively, longer hashes seem to provide stricter filters and thus stronger security. The reverse is true here: a longer $h_{BA}$ would be harmful.
+
+\textbf{Contrast argument.} Suppose $h_{BA}$ were increased to $8$ bytes (matching $h_{AB}$). Then for the same $P = 10^{15}$, the expected stage-b survivors would be $P \cdot N \cdot M / 2^{8(5+8)} = 10^{15} \cdot 4096 \cdot 8 / 2^{104} \approx 10^{-15}$ --- effectively zero. The adversary's filter would reduce candidates to a single specific vector, which they could then attempt to verify through subsequent rounds. This single verifiable candidate provides an analyzable target.
+
+The short $h_{BA}$ deliberately keeps the stage-b survivor count above $1$ for adversarial pool sizes, ensuring \emph{flooding} rather than \emph{specific identification}. The cumulative preimage barrier of $120$ bits (reference v2: $\lambda_{\text{preimage}} = 8 \cdot (5 + 2 + 8)$) remains intact, but the per-stage breakdown deliberately concentrates filter strength in the public A$\to$B hashes ($h_{AB} = 5$) and the Final hashes ($h_P = 8$), while keeping the per-round B$\to$A hash deliberately permissive.
+
+This is a \emph{security-by-flooding} argument distinct from standard cryptographic filter-strength arguments. Empirical validation (Section~\ref{sec:empirical-attackers}) confirms its operation: across all evaluated adversary classes, including B.4 AES-Oracle with explicit attempts to leverage stage-b survivors, no successful $K^*$ recovery occurred over $300$ transcripts per class.
+
+\subsection{Cumulative Preimage Barrier}
+
+For each password vector $v \in \mathcal{P}$, the adversary observes from the public transcript:
+\begin{itemize}[leftmargin=*]
+\item $H[0\mathord{:}h_{AB}](v)$ from A$\to$B hashes of the round in which $v$ was accepted;
+\item $H[h_{AB}\mathord{:}h_{AB}+h_{BA}](v)$ from B$\to$A message of the same round;
+\item $H[h_{AB}+h_{BA}\mathord{:}h_{AB}+h_{BA}+h_P](v)$ from the Final message.
+\end{itemize}
+
+The total observable hash constraint per password vector is $\lambda_{\text{preimage}} = 8(h_{AB} + h_{BA} + h_P) = 120$ bits for reference v2.
+
+\begin{theorem}[preimage complexity]\label{thm:preimage}
+Assuming SHA-256 as a random oracle, the expected number of hash evaluations required to find a vector $v$ satisfying the $\lambda_{\text{preimage}}$-bit constraint is $2^{\lambda_{\text{preimage}}}$.
+\end{theorem}
+
+Even given a satisfying vector, the adversary cannot uniquely identify it as ``the'' password vector: the remaining $8L - \lambda_{\text{preimage}}$ bits of the vector are a priori uniform under the random oracle assumption. For reference v2 ($L = 32$, $\lambda_{\text{preimage}} = 120$), this gives $|\{u : H[0{:}\lambda/8](u) = H[0{:}\lambda/8](v)\}| \approx 2^{8L - \lambda_{\text{preimage}}} = 2^{136} \approx 8{,}7 \cdot 10^{40}$ indistinguishable candidates.
+
+\paragraph{Two perspectives on the same number.} The preimage barrier $2^{120}$ and the indistinguishable set size $2^{136}$ are complementary characterisations of the same designed structure:
+\begin{itemize}[leftmargin=*]
+\item $2^{120}$ is a \emph{lower bound on adversarial work} to find any single vector satisfying the hash constraints.
+\item $2^{136}$ is an \emph{upper bound on actionable information} the adversary obtains per password vector: even with unbounded compute, the adversary's candidate set has $2^{136}$ entries of which exactly one is correct.
+\end{itemize}
+Their product $2^{120} \cdot 2^{136} = 2^{256} = 2^{8L}$ equals universe size, reflecting the conservation: $\lambda_{\text{preimage}}$ bits trade adversarial work against flooding defense. This reveals why the design intentionally keeps $\lambda_{\text{preimage}}$ \emph{below} the universe size --- increasing $\lambda_{\text{preimage}}$ would reduce the flooding set and expose the construction to specific identification attacks, the very failure mode that AES-CBC NoPadding (Section~\ref{sec:aes}) was designed to prevent.
+
+Verification requires the adversary to also derive the correct $K_t$ for AES validation against the next round --- which requires \emph{all} $M$ password vectors of the round, multiplying the preimage barrier by the combinatorial complexity of the password set.
+
+\subsection{Defense Interaction}
+
+Statistical drift (§\ref{sec:drift}) and AES key derivation (this section) are complementary defenses:
+
+\begin{itemize}[leftmargin=*]
+\item Drift constrains the candidate distribution: tail-selection ensures candidates have low $\Pr_\mathcal{S}$, requiring exponential adversarial work to sample directly from the distribution.
+\item AES with no validation oracle and short $h_{BA}$ ensures that even adversaries who bypass the distribution constraint (e.g., by enumerating with large $P$) face flooding rather than specific identification.
+\item The cumulative preimage barrier (Theorem~\ref{thm:preimage}) sets a hard lower bound on adversarial work, independent of distribution structure.
+\end{itemize}
+
+An adversary attempting to break Grata Cascade must simultaneously circumvent all three: bypass the drift-induced tail selection, defeat the flooding defense to identify specific candidates, and overcome the preimage barrier. Empirical evaluation (Section~\ref{sec:empirical}) confirms no current adversary class achieves any of these.
+
+\textbf{Limits of the analysis.} This analysis is \emph{informal} and does not constitute a proof:
+\begin{enumerate}[leftmargin=*]
+\item No formal reduction from key-indistinguishability advantage to preimage hardness has been established (Open Problem~\ref{prob:dynamic-formal}); the extension to a CKA primitive with a sequence of keys is treated separately in Open Problem~\ref{prob:cka-extension}.
+\item Multi-round correlation attacks may yield stricter information than the sum of per-round constraints (Open Problem~\ref{prob:multiround}).
+\item The analysis validates only the reference configuration empirically; other parametric profiles require independent evaluation (Open Problem~\ref{prob:parametric}).
+\end{enumerate}
+
+\section{Empirical Evaluation}\label{sec:empirical}
+
+This section reports empirical evaluation of reference v2 (Table~\ref{tab:params}) implemented in C\# (.NET 9, post-F3 SHA-NI). Complete code and reproducible scripts are available in the accompanying repository under \texttt{configs/reference.json}, \texttt{reports/refv2/}, and \texttt{docs/glossary.md}.
+
+\subsection{Protocol Convergence}\label{sec:empirical-convergence}
+
+Reference v2 was tested on $5 \times 10^4$ independent runs (five parallel shards of $10\,000$, aggregated with renumbered run indices). Per-run metrics --- iteration count, elapsed time, $K^*$ hex, FH and KM flags --- are persisted to a single CSV (\texttt{reports/refv2/convergence\_50k.csv}, SHA-256 \texttt{834489A6\ldots}), enabling reviewer-side reproducibility.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+Outcome & Count & Rate \\
+\midrule
+$\text{FH}=\text{true} \land \text{KM}=\text{true}$ (success) & $49\,996$ & $99{,}9920\%$ \\
+$\text{FH}=\text{true} \land \text{KM}=\text{false}$ (divergence) & $4$ & $0{,}0080\%$ \\
+$\text{FH}=\text{false}$ (structural break) & $0$ & $0{,}0000\%$ \\
+\bottomrule
+\end{tabular}
+\caption{Reference v2 convergence baseline ($N = 50\,000$). Per-shard divergence distribution $\{1, 0, 2, 0, 1\}$ is Poisson-consistent with rate $\sim 8 \cdot 10^{-5}$. Iteration distribution: median $49$, p95 $62$, max $90$. Elapsed median $1{,}71$ s/run.}
+\label{tab:f2-v2}
+\end{table}
+
+\textbf{Failure-rate confidence.} The Clopper--Pearson upper $95\%$ CI on the combined failure rate (FH=false or KM=false) is $2{,}048 \cdot 10^{-4}$ (two-sided, $\alpha/2 = 0{,}025$ per tail).
+
+\textbf{Diagnosis of residual divergences.} The $4$ KM divergences in $5 \times 10^4$ runs (rate $\sim 8 \cdot 10^{-5}$) are consistent with $h_{AB}$-collisions becoming the dominant divergence source after $h_P$ was strengthened: the v1 reference at $h_P = 4$ produced $9$ divergences in $50\,000$ runs (rate $\sim 1{,}8 \cdot 10^{-4}$), and v2's $h_P = 8$ reduces Final-slot collision probability per slot from $2^{-32}$ to $2^{-64}$. The residual rate ($\sim 8 \cdot 10^{-5}$) exceeds the $h_P$-only floor by orders of magnitude and is consistent with $h_{AB}$-collisions ($N^2 / 2^{8h_{AB}} = 2^{24}/2^{40} = 2^{-16}$ per round, accumulating $\sim m \cdot 2^{-16}$ over $m \approx 49$ rounds, $\sim 10^{-4}$). The natural follow-up — incrementing $h_{AB}$ from $5$ to $6$ — was empirically validated and is reported below as a Validated Finding (Section~\ref{sec:empirical-habresidual}).
+
+\subsubsection{$H_{AB} = 6$ Ablation: Residual Divergence Elimination}\label{sec:empirical-habresidual}
+
+The $h_{AB}$-collision model above predicts that incrementing $h_{AB}$ from $5$ to $6$ should reduce per-round collision probability by $2^8 = 256\times$, predicting a residual rate $\sim 3 \cdot 10^{-7}$ at the cost of $+N$ bytes per round (i.e.\ $+4$ KB per round at $N = 4096$). We validated this prediction directly.
+
+A \texttt{reference\_h\_AB6} configuration (clone of reference v2 with $h_{AB} = 5 \to 6$, all other parameters held to v2 defaults; $\lambda_\text{preimage} = 8 \cdot (6+2+8) = 128$ bits versus reference v2's $120$) was run for $5 \times 10^4$ convergence trials. Outcome: $50\,000 / 50\,000 = 100{,}0000\%$ Final-hit rate; $50\,000 / 50\,000 = 100{,}0000\%$ keys-match rate (zero divergences). Clopper--Pearson upper $95\%$ CI on the failure rate is $7{,}38 \cdot 10^{-5}$, sitting \emph{below} the reference v2 (h_{AB}=5) observed rate of $8{,}0 \cdot 10^{-5}$ — direct empirical confirmation that the $+1$ byte $h_{AB}$ does reduce residual divergence below the v2 baseline.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{$h_{AB}$-collision residual scaling across four empirical points.}
+\label{tab:hab-scaling}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Profile} & \textbf{$h_{AB}$ (bit)} & \textbf{$N$} & \textbf{$n$} & \textbf{Observed} & \textbf{CP upper $95\%$ CI} \\
+\midrule
+F13-v2 IoT             & $32$ & $1024$ & $200$    & $1/200 = 5 \cdot 10^{-3}$ & $2{,}8 \cdot 10^{-2}$ \\
+Reference v2 (anchor)  & $40$ & $4096$ & $50\,000$ & $4/50\,000 = 8 \cdot 10^{-5}$ & $2{,}05 \cdot 10^{-4}$ \\
+\textbf{$h_{AB} = 6$ ablation} & \textbf{$48$} & \textbf{$4096$} & \textbf{$50\,000$} & \textbf{$0/50\,000$}  & \textbf{$7{,}38 \cdot 10^{-5}$} \\
+F11-v2 pq128           & $48$ & $8192$ & $200$    & $0/200$                  & $1{,}5 \cdot 10^{-2}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The four points span a $16$-bit $h_{AB}$ swing (32~bit $\to$ 48~bit). The $h_{AB} = 6$ row at reference scale ($N = 4096$) is the cleanest scaling test: it varies only $h_{AB}$ relative to the F2-v2 anchor, all other parameters held. Its observed CP upper bound ($7{,}38 \cdot 10^{-5}$) is the strongest piece of evidence — it lies \emph{below} the reference v2 baseline rate ($8{,}0 \cdot 10^{-5}$) at $50\,000$ trials.
+
+Iteration distribution at $h_{AB} = 6$ is statistically identical to reference v2 (median $49$, mean $49{,}43$, p95 $61$, max $85$); the additional byte does not slow protocol convergence. The bandwidth trade-off is $+4$ KB per round at $N = 4096$, a $\sim 20\%$ increase on the A$\to$B channel only.
+
+\textbf{Implication.} \texttt{reference\_h\_AB6} is a viable v3 reference profile candidate. Promotion would close the $h_{AB}$-residual question definitively and shift the deployment baseline from $\lambda_\text{preimage} = 120$ bits ($\sim 2^{136}$ indistinguishable set) to $\lambda_\text{preimage} = 128$ bits, in exchange for the bandwidth cost above.
+
+\subsection{Statistical Uniformity of Output Keys}\label{sec:empirical-nist}
+
+We collected $1000$ independent reference v2 keys ($999$ included; $1$ dropped to a KM divergence, consistent with the rate above) and applied the 12-test NIST SP 800-22~\cite{NIST800-22} suite. The aggregated bitstream is $255\,744$ bits ($31\,968$ bytes). All 12 tests pass at $\alpha = 0{,}01$:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+Test & $p$-value & Verdict \\
+\midrule
+Frequency (Monobit) & $0{,}930667$ & PASS \\
+Block Frequency ($M = 128$) & $0{,}390234$ & PASS \\
+Runs & $0{,}457184$ & PASS \\
+Longest Run of Ones in a Block & $0{,}800742$ & PASS \\
+Binary Matrix Rank ($M = 32$, $Q = 32$) & $0{,}315551$ & PASS \\
+Discrete Fourier Transform & $0{,}793860$ & PASS \\
+Non-overlapping Template ($m = 9$) & $0{,}939024$ & PASS \\
+Approximate Entropy ($m = 2$) & $0{,}829123$ & PASS \\
+Cumulative Sums (forward) & $0{,}948102$ & PASS \\
+Cumulative Sums (reverse) & $0{,}891414$ & PASS \\
+Serial $P_1$ ($m = 3$) & $0{,}828833$ & PASS \\
+Serial $P_2$ ($m = 3$) & $0{,}629003$ & PASS \\
+\bottomrule
+\end{tabular}
+\caption{NIST SP 800-22 battery on reference v2 ($999/1000$ keys, $255\,744$ bits, $\alpha = 0{,}01$). All 12 tests pass; the lowest $p$-value is $0{,}3156$ (Binary Matrix Rank). Detailed test parameters in Appendix~\ref{app:nist}.}
+\label{tab:nist-v2}
+\end{table}
+
+\subsection{Parameter Calibration via Systematic Sweeps}\label{sec:empirical-calibration}
+
+Three parameters --- $p_\text{upd}$, $\theta_{\text{cand}}$, and $s$ (seed perturbation range) --- were originally calibrated via systematic sweeps on reference v1. The results below establish the operational ranges and inform reference v2: $p_\text{upd} = 0{,}75$ (sweet-spot, retained in v2), $\theta_{\text{cand}}$ exposed as configurable Tier-3 defense (disabled by default in v2; the $-95$ value below is the reference-v1 calibrated optimum and recommended starting point for tightened deployments), and $s$ moved from $3$ (v1) to $4$ (v2) within the validated range $[1, 30]$. All sweeps used safety guards (max iteration cap of $200$, $2$ GB memory bound per worker, early abort on $< 25\%$ convergence rate) developed during the F4 calibration phase and reused across subsequent sweeps.
+
+\subsubsection{$\theta_{\text{cand}}$ Narrow Sweep}\label{sec:empirical-cand}
+
+Values in $\{-85, -90, -95, -100, -105, -110, -115\}$ at $p_\text{upd} = 0{,}75$, $N = 200$ runs per value:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rrrrrr}
+\toprule
+$\theta_{\text{cand}}$ & FH/N & iter(mean) & skipped\_avg & ratio & avg\_pw\_log2 \\
+\midrule
+$-85$ & 200/200 & 61 & 9{,}7 & 15{,}8\% & $-163{,}05$ \\
+$-90$ & 200/200 & 63 & 14{,}9 & 23{,}5\% & $-164{,}61$ \\
+$-95$ & 200/200 & 72 & 23{,}0 & 32{,}0\% & $-165{,}92$ \\
+$-100$ & 200/200 & 82 & 34{,}2 & 41{,}4\% & $-166{,}92$ \\
+$-105$ & 198/200 & 110 & 59{,}0 & 53{,}8\% & $-169{,}18$ \\
+$-110$ & 136/200 & 162 & 104{,}4 & 64{,}4\% & $-173{,}99$ \\
+$-115$ & 2/200 & 195 & 142{,}6 & 73{,}1\% & $-180{,}40$ \\
+\bottomrule
+\end{tabular}
+\caption{$\theta_{\text{cand}}$ narrow sweep on reference. The transition to convergence collapse is smooth and monotonic; $\theta_{\text{cand}} = -95$ is the calibrated reference: strictest value maintaining $100\%$ convergence with skipped ratio $\leq 40\%$.}
+\label{tab:cand-sweep}
+\end{table}
+
+\subsubsection{$p_\text{upd}$ Sweep}\label{sec:empirical-pupd}
+
+Values in $\{0{,}1, 0{,}25, 0{,}5, 0{,}75, 0{,}9, 0{,}95, 1{,}0\}$ with $\theta_{\text{cand}} = -95$:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rrrrrr}
+\toprule
+$p_\text{upd}$ & FH/N & iter(p50) & stat\_entropy & stat\_max\_prob & avg\_pw\_log2 \\
+\midrule
+$0{,}10$ & 0/50 & 201 (cap) & 7{,}55 & 0{,}04 & NaN \\
+$0{,}25$ & 0/50 & 201 (cap) & 7{,}09 & 0{,}09 & NaN \\
+$0{,}50$ & 0/50 & 201 (cap) & 6{,}13 & 0{,}16 & NaN \\
+$0{,}75$ & 200/200 & 67 & 4{,}49 & 0{,}33 & $-165{,}10$ \\
+$0{,}90$ & 174/200 & 106 & 2{,}69 & 0{,}58 & $-167{,}45$ \\
+$0{,}95$ & 0/50 & 201 (cap) & 1{,}68 & 0{,}74 & NaN \\
+$1{,}00$ & 0/50 & 201 (cap) & 0{,}00 & 1{,}00 & NaN \\
+\bottomrule
+\end{tabular}
+\caption{$p_\text{upd}$ sweep on reference. Monotonic Stat concentration with rising $p_\text{upd}$. Convergence is narrow: $p_\text{upd} \leq 0{,}5$ fails (insufficient drift formation); $p_\text{upd} \geq 0{,}95$ fails (Stat collapse starves filtered candidate selection). Operational range: $[0{,}6, 0{,}95]$.}
+\label{tab:pupd-sweep}
+\end{table}
+
+\subsubsection{$\theta_{\text{cand}}$ Ablation: Validating the Security Role}\label{sec:empirical-pupd-ablation}
+
+To verify the security role of $\theta_{\text{cand}}$, we repeated the $p_\text{upd}$ sweep with the filter disabled:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rrrr}
+\toprule
+$p_\text{upd}$ & FH/N (filtered $-95$) & FH/N (disabled) & avg\_pw\_log2 disabled \\
+\midrule
+$0{,}75$ & 200/200 & 200/200 & $-158$ \\
+$0{,}90$ & 174/200 & 200/200 & $-150$ \\
+$0{,}95$ & 0/50 & 200/200 & $-143$ \\
+$1{,}00$ & 0/50 & 200/200 & $-53$ \\
+\bottomrule
+\end{tabular}
+\caption{Ablation confirms the security role of $\theta_{\text{cand}}$ under Stat concentration. Without the filter, high $p_\text{upd}$ preserves convergence but collapses candidate log-probability from $\approx -160$ to $\approx -53$ at $p_\text{upd} = 1{,}0$, exposing candidates to direct statistical generation by adversaries with reconstructable Stat.}
+\label{tab:pupd-ablation}
+\end{table}
+
+The filter enforces structural security at the cost of constraining the viable $p_\text{upd}$ range. The reference configuration trades upper-edge viability ($p_\text{upd} = 0{,}95$) for approximately $100$ bits of security margin in candidate distribution depth.
+
+\subsubsection{Seed Perturbation Range $s$ Sweep}\label{sec:empirical-seed}
+
+Values $s \in \{1, 2, 3, 5, 7, 10, 15, 30\}$ with reference configuration ($\theta_{\text{cand}} = -95$, $p_\text{upd} = 0{,}75$), $N = 200$ runs per value:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{rrrrrl}
+\toprule
+$s$ & FH/N & iter(med) & avg\_pw\_log2 & $\rho_\text{pool}$ ($\log_2$) & Note \\
+\midrule
+$1$ & 200/200 & 68 & $-165{,}78$ & $-38{,}7$ & 39 bits denser than ref \\
+$2$ & 200/200 & 70 & $-165{,}85$ & $-65{,}7$ & 12 bits denser than ref \\
+$3$ & 200/200 & 68 & $-166{,}32$ & $-77{,}8$ & Reference \\
+$5$ & 200/200 & 69 & $-166{,}30$ & $-101{,}1$ & 23 bits sparser \\
+$7$ & 200/200 & 69 & $-164{,}98$ & $-119{,}5$ & 42 bits sparser \\
+$10$ & 200/200 & 70 & $-165{,}29$ & $-141{,}0$ & 63 bits sparser \\
+$15$ & 200/200 & 69 & $-165{,}84$ & $-167{,}5$ & 90 bits sparser \\
+$30$ & 200/200 & 68 & $-163{,}78$ & $-220{,}9$ & 143 bits sparser \\
+\bottomrule
+\end{tabular}
+\caption{Seed perturbation range sweep ($N = 200$ runs per value). Convergence is invariant across $s \in [1, 30]$: $1600/1600$ runs, iter(med) spread $\pm 1$, avg\_pw\_log2 spread $\pm 1{,}3$ bits. Pool density $\rho_\text{pool}$ varies by $182$ bits across the range without affecting convergence performance, supporting the structural argument that drift dominates pool density in the convergence dynamics.}
+\label{tab:seed-sweep}
+\end{table}
+
+\paragraph{B.4 dense-pool re-test.} The $s$-sweep enabled an empirical re-test of B.4 AES-Oracle adversary at densified pool conditions. With $s = 1$ giving $\rho \approx 2^{-38}$ ($39$ bits denser than reference), the discriminator's null-power result was confirmed: across $s \in \{1, 2, 3\}$ with $30$ transcripts per value, total $2{,}3 \cdot 10^{8}$ near-seed samples, mean TP rate $\approx 0$ matched mean FP rate $\approx 0$ (Poisson-noise level). This empirically refutes the hypothesis that increased pool density would expose discriminator signal, and supports the interpretation that AES key derivation (rather than pool sparsity) is the dominant defense against B.4-class attacks.
+
+\subsection{Per-Profile Validation}\label{sec:empirical-profiles}
+
+Reference v2 has been fully empirically validated (Sections~\ref{sec:empirical-convergence}, \ref{sec:empirical-nist}, \ref{sec:empirical-attackers}). Production targets Mobile and HighSec (Table~\ref{tab:profiles}) are pending empirical re-derivation under the v2 reference.
+
+For historical context, reference v1 per-profile validation (pre-pivot) reported:
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrl}
+\toprule
+Profile (v1) & FH/N & KM/N & iter(med) & NIST PASS/N/A & Note \\
+\midrule
+Reference v1 & 200/200 & 200/200 & 49 & 12/12, 0 N/A & Pre-pivot baseline \\
+IoT v1 & 200/200 & 200/200 & 68 & 11/12, 1 N/A & $h_P=4$ post-F13 fix \\
+Mobile v1 & 200/200 & 200/200 & 48 & 11/12, 1 N/A & --- \\
+HighSec Classical v1 & 200/200 & 200/200 & 89 & 11/12, 1 N/A & --- \\
+HighSec PQ128 v1 & 50/50 & 50/50 & 69 & 10/12, 1 N/A & --- \\
+\bottomrule
+\end{tabular}
+\caption{Per-profile validation under reference v1 (historical). ``N/A'' indicates Binary Matrix Rank test skipped due to insufficient input length. Re-derivation under reference v2 is an open follow-up; the v2 hash-derivation rule recovers the IoT $h_P = 4$ from earlier $h_P = 3$ silent-key-mismatch issue at the protocol-family scaling level, while Mobile and HighSec scale $h_P$ to $8$ for consistent silent-mismatch margin.}
+\label{tab:profiles-validation}
+\end{table}
+
+\subsection{Passive Adversary Catalogue}\label{sec:empirical-attackers}
+
+Five classes of passive adversaries were implemented and evaluated. The first four (B.1--B.4) are reported on reference v2 transcripts at $N = 300$. The fifth (B.7) is a deterministic Stat-prior lattice enumerator added in v8; we report its dual-mode behaviour against the \texttt{break\_demo} research-only profile (a deliberately weakened design that exposes the cascade structure most clearly), with reference-v2 evaluation deferred.
+
+\subsubsection{B.1 Baseline Random}\label{sec:adv-b1}
+Uniform random $L$-byte sampling, testing SHA-256 prefix match against Final hashes ($h_P = 8$ B in v2, expected work $2^{64}$ per slot). Time-budget bounded ($600$ s/transcript in v2; the choice is justified post hoc by the empirical absence of any partial slot match within the budget).
+
+\subsubsection{B.2 Hash-First Filtered}\label{sec:adv-b2}
+Cascade filtering through three progressively narrowing hash constraints: A$\to$B ($5$ B), B$\to$A ($2$ B), Final ($8$ B). Expected total filter factor $2^{120}$. Pool size $P = 10^7$.
+
+\subsubsection{B.3 Tail-Informed Sampler}\label{sec:adv-b3}
+Modification of B.2 where candidate generation draws from the reconstructed Stat distribution tail. Pool size $P = 10^7$.
+
+\subsubsection{B.4 AES-Oracle Discriminator}\label{sec:adv-b4}
+Given a hypothetical stage-b candidate, decrypts AES and validates by regenerating near-seed pool and testing against next-round A$\to$B hashes. Discriminator power measured as TP/FP rates and Cohen's $d$ across $K = 10^6$ near-seed samples per round pair.
+
+\subsubsection{B.7 Stat-Sorted Enumeration}\label{sec:adv-b7}
+Deterministic top-$K$ enumeration of candidate vectors in joint Stat probability order, replacing the random sampling of B.2/B.3 with a Lawler-style best-first lattice traversal: priority queue on $-\log p$ joint cost, incremental cost update on neighbour expansion, visited-set dedup keyed on packed rank tuples ($L \le 8$).
+
+Two modes are supported:
+\begin{itemize}[leftmargin=*]
+\item \emph{Typical} — vectors yielded in decreasing joint Stat probability (every byte at its locally most-frequent value). Predicted to match A's pool population.
+\item \emph{Tail} — vectors yielded in increasing joint Stat probability (every byte at its locally rarest value). Predicted to match the protocol's CandMax-filtered atypical password vectors.
+\end{itemize}
+
+Validation against \texttt{break\_demo} ($L=8$, $N=256$, $h_{AB}=3$, $h_{BA}=1$, $h_P=3$, $M=4$, $p_\text{upd}=1{,}0$, $\lambda_\text{preimage} = 56$ bits) over $n = 300$ transcripts: $0/300$ $K^*$-recovery in both modes (CP upper $95\%$ CI $1{,}222\%$). The dual-mode investigation revealed that the cascaded $h_{AB}+h_{BA}+h_P$ filter blocks Stat-prior enumeration in either direction at different stages: Typical-first matches A's pool ($4\times$ elevated stage-a hit rate) but misses CandMax-filtered atypical password slots; Tail-first produces ``anti-pool'' vectors ($5 \cdot 10^5$-fold depressed stage-a) and never reaches the cascade. A $10\times$-budget re-test (B.7-Tail at $10^7$ pool) confirmed the limit is not enumeration direction but cascade structure: stage-a rate at $10^7$ converges to the random baseline ($1{,}9 \cdot 10^{-3}$) once the lattice exhausts at $\sim 1{,}7 \cdot 10^6$ samples. Reference v2 evaluation of B.7 remains pending.
+
+\paragraph{Main results ($N = 300$ on reference v2; B.7 row is the break_demo result, see §\ref{sec:adv-b7}).}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Adversary & Runs & $K^*$ recoveries & Success rate & 95\% CI upper & Avg time/run \\
+\midrule
+B.1 Baseline Random & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $600{,}0$ s (cap) \\
+B.2 Hash-First & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $56{,}7$ s \\
+B.3 Structured (Tail) & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $130{,}5$ s \\
+B.4 AES-Oracle & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $335{,}1$ s \\
+B.7 Stat-Sorted (Tail, on \texttt{break\_demo}) & 300 & 0 & $0{,}000\%$ & $1{,}222\%$ & $59{,}0$ s ($10^7$ pool) \\
+\bottomrule
+\end{tabular}
+\caption{Passive adversary evaluation. Rows B.1--B.4 under reference v2 over $N = 300$ transcripts (B.5-extended-v2). Shared transcript set, SHA-256 \texttt{54D24794\ldots}. Total compute $\sim 10^{11}$ SHA-256 evaluations, wall-clock $6$h $33$m on $22$ workers. B.7 row reports the \texttt{break\_demo} dual-mode investigation (Tail mode at $10^7$ pool); B.7 evaluation against reference v2 is deferred. Persisted artefacts: \texttt{reports/refv2/b5\_extended\_results.csv} (B.1--B.4) and \texttt{reports/refv2/break\_demo/} (B.7).}
+\label{tab:attackers}
+\end{table}
+
+No adversary achieved $K^*$ recovery across $300$ transcripts in any of the four classes. The one-sided Clopper--Pearson upper $95\%$ CI is $1{,}222\%$ for each class.
+
+\paragraph{B.4 oracle discriminative power.} For each round-pair with instrumented ground-truth seed we measured:
+\begin{itemize}[leftmargin=*]
+\item TP: discriminator receives true seed; count hits against next-round A$\to$B hashes.
+\item FP: discriminator receives uniform random seed; identical test.
+\end{itemize}
+
+Across $10\,262$ round-pairs and $2{,}05 \cdot 10^{10}$ queries: mean TP $0{,}003411$, mean FP $0{,}002923$, Cohen's $d = 0{,}009$. The discriminator shows \emph{no measurable power}: empirical FP rate is within the analytical SHA-oracle prediction band ($\mathbb{E}[\text{FP}] = 0{,}003725$). RNG cross-check on B.1 sampler: Shannon entropy $7{,}999996$ bits/byte $\approx$ uniform.
+
+\paragraph{Stage cascade validation (B.2).} Across $300$ transcripts: $503$ rounds with stage-a hits ($515$ total hits), $0$ rounds with stage-b hit, $0$ rounds with stage-c hit. Stage-a hits match analytical cascade within Poisson noise ($\mathbb{E}[\text{stage-a/transcript}] \approx P \cdot N \cdot m / 2^{8 h_{AB}}$ for $P = 10^7$, $N = 4096$, $m \approx 49$, $h_{AB} = 5$, gives $\approx 1{,}9$ stage-a hits per transcript; observed $\approx 1{,}7$). The transition stage-a $\to$ stage-b consumes the budget: $0$ stage-b survivors in $300$ transcripts is consistent with the $h_{BA} = 2$-byte filter ($2^{16}$ further reduction) on a stage-a survivor count near unity.
+
+\subsection{Summary}
+
+Total compute under reference v2: $\sim 10^{11}$ SHA-256 evaluations across the four-attacker battery. Key findings:
+
+\begin{itemize}[leftmargin=*]
+\item Final-hit rate $100\%$ over $5 \times 10^4$ runs; keys-match rate $99{,}992\%$ (4 divergences, dominant residual source: $h_{AB}$ collisions).
+\item Clopper--Pearson upper $95\%$ CI on combined convergence failure: $2{,}05 \cdot 10^{-4}$.
+\item NIST SP 800-22: $12/12$ PASS over $1000$ keys ($255\,744$ bits).
+\item No passive adversary recovered $K^*$ over $N = 300$ transcripts; CP upper $95\%$ CI per class $1{,}222\%$.
+\item B.4 discriminator: Cohen's $d = 0{,}009$ across $2{,}05 \cdot 10^{10}$ queries (no measurable power).
+\item Stage filtering cascades match analytical predictions within Poisson noise.
+\end{itemize}
+
+Results empirically validate reference v2 within the tested adversary model. Mobile and HighSec profile re-derivation, active adversaries (delegated to transport), ML-based transcript attacks, multi-round weak-signal aggregation, and side channels remain outside current validation (Section~\ref{sec:open}).
+
+\paragraph{Implementation note.} Random number generation in the protocol implementation uses \texttt{System.Security.Cryptography.RandomNumberGenerator}, a cryptographically secure PRNG. All reported results were obtained after migration from \texttt{System.Random}; pre-migration results are preserved separately for reproducibility.
+
+\section{Comparison with one-shot KE primitives}\label{sec:comparison}
+
+In this paper Grata Cascade is positioned as a \emph{one-shot} key-agreement primitive (Sections~\ref{sec:gc-as-candidate}, \ref{sec:related-cka}). The comparison is therefore directed at existing one-shot KE primitives standardly deployed in hybrid post-quantum compositions, not at CKA constructions (Signal Double Ratchet, MLS, Triple Ratchet). For the relation to CKA see Section~\ref{sec:related-cka} and the open problem~\texttt{prob:cka-extension}.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lllll}
+\toprule
+Scheme & Basis & PQ security & Bandwidth / session & Formal proof \\
+\midrule
+ECDH (X25519) & DLP & No (Shor) & $\sim 32$ B & Yes (ROM) \\
+ML-KEM-768 & Module-LWE & Yes & $\sim 1{,}2$ KB & Yes (ROM) \\
+X-Wing~\cite{xwing} & DLP $+$ Module-LWE & Yes & $\sim 1{,}3$ KB & Yes \\
+Merkle puzzles~\cite{Merkle1978} & Hash preimage & Yes (Grover) & $O(N^2)$ work & Yes (IR89) \\
+\textbf{Grata Cascade (ref v2)} & Hash preimage $+$ drift & Yes (conj.) & $\sim 1$ MB & No (open) \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of one-shot KE primitives. Basis is the computational assumption underlying security. ``Conj.'' = conjectural (structurally argued, not formally proved). ``IR89'' = Impagliazzo--Rudich black-box bound~\cite{IR1989}. Bandwidth for ECDH and ML-KEM is round-trip; for Grata Cascade it is per session ($\sim 49$ rounds $\times$ $\sim 20$ KB).}
+\label{tab:comparison}
+\end{table}
+
+\paragraph{Discussion.} Grata Cascade is in transmitted bandwidth \emph{about three orders of magnitude worse} than ML-KEM and almost five orders worse than ECDH. This is a fundamental engineering disadvantage and rules it out for the vast majority of production deployments where bandwidth is a sensitive parameter (mobile data, IoT). The open problem~\texttt{prob:bandwidth} (Section~\ref{sec:open}) sketches concrete reduction paths.
+
+The potential value of Grata Cascade is not in efficiency but in \emph{structural cryptographic diversification}:
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{The X-Wing hybrid composition} (X25519 $\oplus$ ML-KEM-768) rests on two independent computational assumptions: DLP (vulnerable to Shor) and Module-LWE (post-quantum secure under known attacks, but cryptographically relatively young). An adversary would have to break \emph{both} to recover the key.
+\item Grata Cascade rests on a \emph{third} structurally independent base: SHA-256 preimage hardness combined with statistical drift. This base is of an entirely different nature than DLP or Module-LWE; it does not use algebraic structure (groups, lattices), only hashes and statistical drift.
+\item In an X-Wing-style hybrid composition Grata Cascade adds a third layer whose simultaneous breakage with DLP \emph{and} Module-LWE would require three independent cryptanalytic advances. This is the value of \emph{computational diversification} carried from two to three independent assumptions.
+\item SHA-256 preimage resistance retains post-quantum security with Grover's $2^{n/2}$ slowdown: the full hash stays post-quantum-secure at $2^{128}$ (against the classical $2^{256}$). Our concrete barrier $\lambda = 120$ bits (Section~\ref{sec:rationale}) thus provides structurally post-quantum security.
+\end{itemize}
+
+\paragraph{Versus Merkle puzzles.} The classical hash-based KE primitive, Merkle puzzles, achieves $O(N^2)$ adversarial work over $O(N)$ legitimate work, which by Impagliazzo--Rudich~\cite{IR1989} is the optimum in the black-box model. For $\lambda = 128$ bits this requires $N \approx 2^{64}$ puzzles, which is deployment-prohibitive. Grata Cascade conjecturally beats this black-box bound through the combination of a hash with statistical drift (open problem~\texttt{prob:dynamic-formal}). If formally confirmed, this would be the first deployable hash-only KE primitive with a better bandwidth-security trade-off than Merkle.
+
+\paragraph{Position in the hybrid stack.} Grata Cascade is \emph{not} an attempt to replace ECDH or ML-KEM. It is positioned as a \emph{third coequal layer} in an extended X-Wing-style composition, where efficiency is secondary to assumption independence. A concrete deployment scenario: a hybrid stack X25519 $\oplus$ ML-KEM-768 $\oplus$ Grata Cascade provides computational diversification across three structurally distinct assumptions at the cost of $\sim 1$ MB of additional per-session bandwidth.
+
+\section{Open Problems}\label{sec:open}
+
+\begin{openproblem}[CKA extension]\label{prob:cka-extension}
+Grata Cascade as defined in this paper is a \emph{one-shot} key agreement primitive: each session converges to a single shared $K^*$ over $\sim 49$ rounds, with no built-in mechanism for continuous key rotation. Using it as a CKA primitive in the sense of Alwen--Coretti--Dodis~\cite{ACD19} (with formal forward secrecy and post-compromise security guarantees across an ongoing sequence of derived keys) requires a substantive extension. We sketch three possible paths. \textbf{Path A} is the primary target for a follow-up paper with a formal reduction to single-session security; Paths B and C remain as alternatives.
+
+\paragraph{Path A --- Repeated-session chaining (primary target).}
+Run Grata Cascade as a key-rotation primitive: each new session $i+1$ uses $K^*_i$ as a seed mixed into the initial Stat distribution of session $i+1$, with fresh randomness injection for post-compromise security. Convergence cost amortises poorly (one full $\sim 49$-round session per key rotation, $\sim 1$ MB of bandwidth per rotation). Forward secrecy follows from the one-way derivation $K^*_i \to K^*_{i+1}$. PCS requires fresh randomness injection, sketched below.
+
+\emph{Formal requirements for Path A:}
+\begin{itemize}[leftmargin=*]
+\item Game-based proof: distinguishing $K^*_{i+1}$ from random given transcripts of sessions $\leq i$ reduces to the security of single-session KA.
+\item PCS proof: state recovery time bounded by $\max(\text{rounds of any single session})$.
+\item Concrete bound: for reference v2 with $\lambda_\text{preimage} = 120$ bits each rotated key inherits the same 120-bit barrier.
+\end{itemize}
+
+\paragraph{Path B --- Symmetric ratchet on top of a single session.}
+Use one Grata Cascade session to bootstrap $K^*_0$, then derive subsequent keys $K^*_i = \mathrm{HKDF}(K^*_{i-1}, \mathrm{salt}_i)$ where $\mathrm{salt}_i$ is publicly transmitted. This is essentially the symmetric KDF ratchet of the Signal stack~\cite{DR2017}, applied on top of GC. Cheap ($\sim$ µs per rotation), but inherits \emph{no} PCS from GC itself --- the security of $K^*_i$ is at most that of $K^*_0$.
+
+\emph{Use case:} GC bootstraps a long-term key, then the symmetric ratchet handles high-frequency message-level rotation. Composes cleanly with existing hybrid messaging stacks.
+
+\paragraph{Path C --- Native CKA construction.}
+Redesign GC to natively output a sequence $\{k_1, k_2, \ldots\}$ per session. Speculative: each round of the cascade emits a ``released'' key derived from the current state, while a ``kept'' state continues to drift. Forward secrecy from the drift one-way property; PCS from $R_t$ randomness injection.
+
+\emph{Formal requirements for Path C:}
+\begin{itemize}[leftmargin=*]
+\item CKA security game per ACD19 Definition~1.
+\item FS proof: distinguishing $k_t$ from random given $(k_1, \ldots, k_{t-1})$ and the full transcript reduces to the unpredictability of drift at the $t$-th round.
+\item PCS proof: after compromise at time $t$ and recovery at $t+\delta$, $k_{t+\delta+\epsilon}$ is computationally indistinguishable from random for sufficient $\epsilon$.
+\end{itemize}
+
+\paragraph{Comparison and recommendation.}
+Path A is structurally cleanest and provides a direct formal target (reduction to single-session security); it is expensive ($\sim$ 1 MB per rotation) but defensible as a follow-up paper. Path B is closest to deployable today (composes with existing Signal-style stacks); it offers FS but inherits PCS only from the bootstrapping GC, not from the ratchet itself. Path C is the most novel but requires fundamental redesign and a new security analysis --- a long-term research direction.
+
+\textbf{This paper does not propose a concrete extension}, only the structure for future research. The formal CKA-game definitions, the properties to be achieved, and the reductions to underlying primitives all remain open for each of the three paths.
+\end{openproblem}
+
+\begin{openproblem}[Formalisation of dynamic asymmetry]\label{prob:dynamic-formal}
+The static birthday-bound asymmetry $R \approx n/k$ from Theorem~\ref{thm:asymmetry} provides a lower bound on legitimate-versus-adversary advantage in Grata Cascade. The dynamic mechanisms (deterministic hash addressing, synchronised statistical drift, multi-round iterative refinement) strengthen this bound, but quantitative formalisation of the strengthening remains open. Specifically: derive an analytical bound on adversarial advantage as a function of (rounds, parameters, Stat concentration) under the random oracle assumption for SHA-256. Reduction to SHA-256 preimage hardness is a sub-component of this larger formalisation. This is --- together with~\texttt{prob:cka-extension} --- the central open problem; its resolution would convert the empirical security claims of this paper into formal cryptographic guarantees for the single-session security of $K^*$, which would in turn provide the basis for Path A in~\texttt{prob:cka-extension}.
+\end{openproblem}
+
+\begin{openproblem}[Full parametric attacker analysis]\label{prob:parametric}
+The three production parametric profiles (Table~\ref{tab:profiles}) are specified per the three-hash design rationale (Section~\ref{sec:rationale}); baseline-parameter empirical validation (Appendix~\ref{app:preliminary}) establishes convergence and statistical uniformity for parameters close to but not identical to the production values. Rigorous passive adversary evaluation (B.1--B.4 with $N \geq 300$ transcripts per profile) at re-calibrated production parameters, together with per-profile Pareto frontier construction in (security, bandwidth, convergence, memory) space, is planned follow-up work.
+\end{openproblem}
+
+\begin{openproblem}[Multi-round weak-signal aggregation]\label{prob:multiround}
+Per-round B.4 discriminator has no detectable power on reference v2 across $2{,}05 \cdot 10^{10}$ queries (Cohen's $d = 0{,}009$, Section~\ref{sec:empirical-attackers}) and across $182$ bits of pool density variation under reference v1 (Section~\ref{sec:empirical-seed}). An adversary aggregating weak signals across $k$ rounds obtains effect size $d_0 \sqrt{k}$; for $d_0 = 0{,}009$, $k = 50$, $d \approx 0{,}064$ is still below typical detection thresholds, but for an idealised ML adversary trained directly on aggregate transcript features, the detection floor is unknown. Whether such aggregation is achievable against Grata Cascade remains open.
+\end{openproblem}
+
+% prob:hab-residual closed in v8 — empirically validated by H_AB=6 ablation
+% (Section~\ref{sec:empirical-habresidual}). The label is preserved here as a
+% stub so any historical \ref{prob:hab-residual} cross-references still resolve.
+\begin{openproblem}[$h_{AB}$ residual divergence elimination — \textbf{closed in v8}]\label{prob:hab-residual}
+Closed in v8 by a direct $h_{AB} = 6$ ablation at reference scale: $0$ keys-match divergences in $5 \times 10^4$ runs, Clopper--Pearson upper $95\%$ CI on the failure rate $7{,}38 \cdot 10^{-5}$ (below the reference v2 baseline $8{,}0 \cdot 10^{-5}$). See Section~\ref{sec:empirical-habresidual} for full reporting.
+\end{openproblem}
+
+\begin{openproblem}[Dynamic $p_\text{upd}$]\label{prob:pupd-dynamic}
+Static $p_\text{upd} = 0{,}75$ is empirically calibrated as optimal in the reference operational range $[0{,}6, 0{,}95]$ (Section~\ref{sec:p-upd}). A dynamic variant where $p_\text{upd}$ is derived from shared secret state (rather than fixed) would force an adversary to reconstruct the full Stat family $\mathcal{S}_\theta$ for unknown derivation parameter $\theta$, potentially adding bits of effective security. Quantitative security gain and convergence implications remain open.
+\end{openproblem}
+
+\begin{openproblem}[Strengthened NIST evaluation at $10^6$ keys]\label{prob:nist-strong}
+Current NIST evaluation uses $N = 1000$ keys ($\approx 2{,}56 \cdot 10^5$ bits, Section~\ref{sec:empirical-nist}). Strengthened evaluation at $N \geq 10^6$ keys with second-order analysis ($100$ independent suite runs, chi-square uniformity check on resulting $p$-value distribution) would provide higher-confidence statistical uniformity claims. This is feasible within the empirical framework already in use.
+\end{openproblem}
+
+\begin{openproblem}[ML-based adversary]\label{prob:ml}
+Train a deep neural model on the (transcript $\to$ bits of $K^*$) mapping; determine if better than $50\%$ baseline. If so, quantify the leakage and identify which transcript features carry signal. This adversary class is structurally different from the four B.1--B.4 classes evaluated here and is not addressed by current empirical bounds.
+\end{openproblem}
+
+\begin{openproblem}[Bandwidth optimisation]\label{prob:bandwidth}
+Reference requires $\sim 20$ KB per round, dominated by $N$ per-vector hash prefixes on the A$\to$B channel. Can hash encoding improvements (Bloom filters, chunking, amortisation across rounds) reduce per-round bandwidth to $< 5$ KB while preserving security properties? This is primarily an engineering optimisation but with potential impact on deployment viability.
+\end{openproblem}
+
+\begin{openproblem}[Stress-testing the flooding defense at large pools]\label{prob:flood-stress}
+The current empirical passive-adversary battery (Section~\ref{sec:empirical-attackers}) evaluates B.1--B.4 at $P = 10^7$ and B.7 at $P \in \{10^6, 10^7\}$. At $P = 10^7$ the expected number of stage-b survivors per round is $E = P \cdot N \cdot M / 2^{8(h_{AB} + h_{BA})} \approx 4{.}5 \cdot 10^{-6}$, so the observed $0/300$ outcome across all classes is structurally consistent with ``no candidate even reached stage-b'' --- not with ``the stage-b filter held under realistic flooding''. To empirically validate the AES-CBC NoPadding flooding defense (Section~\ref{sec:flooding}) under genuine pressure the evaluation needs to be run at $P \geq 10^{10}$.
+
+\textbf{Prediction at $P = 10^{12}$ on reference v2:} $\approx 22$ stage-b survivors per session (median 49 rounds), $\approx 1{.}2 \cdot 10^{-18}$ stage-c survivors, $\approx 0$ key recoveries. Measuring would validate the predicted scaling $E_{\text{stage-b}} \propto P$ and, more critically, verify that even tens of stage-b candidates per session do not break the $h_P$ filter (or do so only as Poisson noise) --- which is the core claim about the indistinguishable candidate set of size $2^{8L - \lambda_{\text{preimage}}}$.
+
+\textbf{Costs.} Memory: constant (the pool is streamed; only $\sim$ KB of transcript hashes are retained); 16 GB of GPU RAM is more than enough. Compute: B.2 scales linearly in $P$, so $P = 10^{12}$ across 300 sessions at $\approx 57$ s/session on a 22-core CPU with SHA-NI is prohibitive ($\approx 900$ days). GPU SHA-256 (RTX 4060: $\sim 5$ GH/s, RTX 4090: $\sim 10$ GH/s) reduces a full 300-session batch to $8$--$16$ hours. B.4 (AES-Oracle) at this scale has order-of-magnitude worse GPU throughput than B.2 (AES decrypt vs.\ pure SHA), and requires either reducing to $N = 30$ sessions or to $P = 10^{10}$.
+
+\textbf{Deployment plan.} A dedicated RTX 4060 16~GB is available around 2026-05-13. First run: B.2 @ $P \in \{10^{10}, 10^{12}\}$ × 300 sessions (1--2 days). Second run: B.4 @ $P = 10^{10}$ × 30 sessions. Goal: extend Table~\ref{tab:attackers} with a flood-stress column and compare measured stage-b/stage-c hits against the analytic prediction. A negative result (zero stage-c recoveries with measured tens of stage-b survivors) would strengthen the empirical case for the flooding defense beyond the current ``didn't even reach stage-b'' validation.
+\end{openproblem}
+
+\begin{openproblem}[Resource-constrained parameter family (IoT)]\label{prob:iot}
+Empirical calibration and validation of a low-resource profile with $L = 16$, $N \sim 1024$, and hash prefixes scaled to IoT memory/bandwidth constraints. Preliminary empirical data for $L = 16, N = 1024, h_{AB} = 4, h_{BA} = 2, h_P = 4$ are reported in Appendix~\ref{app:preliminary}. Flooding set size at these parameters is only $2^{48}$ --- within reach of modern GPU brute-force enumeration --- placing IoT near the Break-Demo boundary and requiring explicit production-vs-research positioning. Full calibration per the three-rationale design (Section~\ref{sec:rationale}) and subsequent attacker evaluation is open.
+\end{openproblem}
+
+\begin{openproblem}[Post-quantum 128-bit parameter family (PQ128)]\label{prob:pq128}
+Design and empirical validation of a profile achieving $128$-bit post-quantum security under Grover's speedup. The key design question is whether PQ security derives primarily from $\lambda_\text{preimage} \geq 256$ (bandwidth-heavy, conservative path) or from structural arguments combining flooding set size, combinatorial password set, and Stat correlation (elegant but requires Open Problem~\ref{prob:dynamic-formal} resolution). Preliminary data for a paranoid parameter set ($L = 64, N = 8192, h_{AB} = 16, h_{BA} = 8, h_P = 8$) appear in Appendix~\ref{app:preliminary}; principled re-calibration is open.
+\end{openproblem}
+
+\begin{openproblem}[Break-Demo parametric subfamily]\label{prob:breakdemo}
+Systematic exploration of a parametric subfamily where $\lambda_\text{preimage}$ and flooding set size are deliberately reduced to attack-demonstrable levels, providing a pedagogical instance for teaching attack methodology. Proposed parameter ranges: $L \in \{8, 12, 16\}$, $N \in \{256, 384, 512\}$, $h_{AB} = 3$, $h_{BA} = 2$, $h_P \in \{3, 4\}$, $M \in \{4, 6, 8\}$. The extreme ($L = 8, N = 256, h_{AB} = 3, h_{BA} = 2, h_P = 3$) gives $\lambda_\text{preimage} = 64$ and flooding set $2^{0} = 1$. An empirical pilot at sub-extreme $\lambda_\text{preimage} = 56$ ($h_{BA} = 1$, deterministic update) under the five-class adversary battery (Section~\ref{sec:empirical-attackers}) returned $0/300$ across all classes; the dual-mode B.7 investigation shows the cascaded $h_{AB}+h_{BA}+h_P$ filter blocks Stat-prior enumeration in both directions at different stages, indicating the open question is reachable only at lower $\lambda$ or with attack classes outside the cascade-filter framework. Explicit research-only positioning; not recommended for production.
+\end{openproblem}
+
+\section{Conclusion}\label{sec:conclusion}
+
+We have presented Grata Cascade, a continuous key agreement construction whose security rests on the foundational asymmetric knowledge bound of the generalised birthday problem. The static asymmetry $R \approx n/k$ provides a probabilistic lower bound on legitimate-versus-adversary advantage; this static bound is transformed into a dynamic, convergent system through four design choices: deterministic hash addressing, random vector drift, vector update with TPM-inspired adaptation phase, and AES key derivation from intersection vectors.
+
+Empirical evaluation on reference v2 ($L = 32$, $N = 4096$, $h_{AB} = 5$, $h_{BA} = 2$, $h_P = 8$, $M = 8$, $s = 4$, $\lambda_\text{preimage} = 120$ bits, see Section~\ref{sec:empirical}) demonstrates: (i) $100\%$ Final-hit and $99{,}992\%$ keys-match over $5 \times 10^4$ runs (Clopper--Pearson upper $95\%$ CI on combined failure rate $2{,}05 \cdot 10^{-4}$); (ii) statistical uniformity of output keys under NIST SP 800-22 ($12/12$ PASS over $1000$ keys); (iii) zero adversarial success across five passive adversary classes ($N = 300$ transcripts per class, total $\sim 10^{11}$ SHA-256 evaluations), with $95\%$ Clopper--Pearson upper bound $1{,}22\%$ per class; (iv) no measurable discriminative power for B.4 AES-Oracle adversary across $2{,}05 \cdot 10^{10}$ queries (Cohen's $d = 0{,}009$), supporting the structural argument that AES key derivation (not pool density per se) is the dominant defense against this attack class; (v) calibrated operational ranges for the security-relevant parameters $p_\text{upd}$, $s$, and $\theta_\text{cand}$ when enabled. The candidate-rejection threshold $\theta_\text{cand}$ is exposed as a configurable Tier-3 defense and is disabled by default in reference v2; tightening it to the v1 calibrated optimum ($\theta_\text{cand} = -95$) is recommended for deployments under heightened threat models.
+
+A reference-scale $h_{AB} = 6$ ablation (Section~\ref{sec:empirical-habresidual}) over $5 \times 10^4$ runs returned $0/50\,000$ KM divergences, with Clopper--Pearson upper $95\%$ CI of $7{,}38 \cdot 10^{-5}$ — sitting below the reference v2 baseline rate of $8{,}0 \cdot 10^{-5}$. This empirically validates the predicted residual-divergence elimination ($+1$ byte $h_{AB}$ $\to$ $\sim 256\times$ rate reduction) and positions \texttt{reference\_h\_AB6} (with $\lambda_\text{preimage} = 128$ bits) as a v3 reference profile candidate, deferred to deployment review. Iteration distribution at $h_{AB} = 6$ is statistically identical to reference v2; the bandwidth trade-off is $+4$ KB per round at $N = 4096$ on the A$\to$B channel.
+
+Grata Cascade is positioned as a candidate for the \emph{third independent layer} in an X-Wing-style hybrid one-shot key agreement composition (Section~\ref{sec:comparison}). Its security depends neither on number-theoretic assumptions (broken by Shor) nor on lattice-based assumptions (whose post-quantum security remains an active research question), but only on hash function preimage resistance combined with statistical drift --- and SHA-256 preimage resistance under Grover's slowdown retains $2^{128}$-bit post-quantum security. The construction is suitable as the third structurally independent layer in hybrid PQ KE deployments (e.g.\ X25519 $\oplus$ ML-KEM-768 $\oplus$ Grata Cascade) at the cost of $\sim 1$ MB additional per-session bandwidth.
+
+The path forward is dominated by two central open problems. Open Problem~\ref{prob:dynamic-formal} (formalisation of the dynamic asymmetry preservation under iterative rounds) would convert the empirical security claims of this paper into formal cryptographic guarantees for the single-session security of $K^*$. Open Problem~\ref{prob:cka-extension} (extension to a CKA primitive) is the long-term goal: building on the Path A reduction, Grata Cascade would gain full FS/PCS guarantees and become the first hash-based CKA construction, usable as a third independent CKA layer in a Triple-Ratchet-style messaging stack. The remaining open problems address parametric extension, weak-signal aggregation, dynamic parameter derivation, ML-based adversaries, bandwidth optimisation, and a flooding stress test (\texttt{prob:flood-stress}) --- all expanding the empirical and theoretical foundation established here. The $h_{AB}$ residual-divergence question, listed as an open problem in earlier paper versions, is now closed by the v8 ablation result above.
+
+\medskip
+\noindent\textit{Birthday paradox describes a static state. Grata Cascade builds a dynamic one-shot system on top of it. The continuous variant remains open (Open Problem~\ref{prob:cka-extension}).}
+
+\appendix
+
+\section{Optional Defenses for Deployments Without Trusted Transport}\label{app:optional-defenses}
+
+For deployments lacking authenticated transport, three optional defense mechanisms may be added to Grata Cascade at the protocol level. These are not part of the reference protocol but are sketched here for completeness.
+
+\paragraph{(A) Statistical detection of manipulated $R_t$.} Both parties maintain a sliding window of received $R_t$ vectors and apply periodic chi-square goodness-of-fit against uniform distribution. Significant deviation triggers protocol termination. Limitations: cold-start vulnerability during the first $W$ rounds; adaptive adversaries can submit statistically-valid but structurally targeted $R_t$.
+
+\paragraph{(B) Deterministic $R_t$ from shared state.} $R_t$ is derived as $R_t = H(\text{transcript}_{t-1} \Vert \sigma_t^{\text{shared}} \Vert t)$, with both parties computing independently. An adversary cannot modify $R_t$ without the shared state. Limitations: bootstrap problem (first round has no shared state); requires unambiguous shared state, conflicting with Defense~3 flooding behaviour.
+
+\paragraph{(C) Public filtered $R$-pool.} A publicly audited set $\mathcal{R} = \{r_1, \ldots, r_K\}$ with $K \approx 10^6$ pre-filtered vectors. B randomly selects index $i_t$ and sends it; A retrieves $r_{i_t}$ from local copy. Adversary cannot modify vector contents; residual index manipulation provides $\log_2 K \approx 20$ bits per round. Advantages: auditability, quality guarantees. Limitation: operational burden of $\mathcal{R}$ distribution and integrity.
+
+Each variant has different trade-offs; deployment integrators may combine them based on specific threat models.
+
+\section{NIST SP 800-22 Detailed Results}\label{app:nist}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrl}
+\toprule
+Test & $p$-value & Verdict \\
+\midrule
+Frequency (Monobit) & 0{,}7911 & PASS \\
+Block Frequency ($M=128$) & 0{,}0931 & PASS \\
+Runs & 0{,}3654 & PASS \\
+Longest Run of Ones in a Block & 0{,}9980 & PASS \\
+Binary Matrix Rank ($32 \times 32$) & 0{,}9041 & PASS \\
+Discrete Fourier Transform (Spectral) & 0{,}3742 & PASS \\
+Non-overlapping Template ($m=9$) & 0{,}6070 & PASS \\
+Approximate Entropy ($m=2$) & 0{,}2438 & PASS \\
+Cumulative Sums (forward) & 0{,}9654 & PASS \\
+Cumulative Sums (reverse) & 0{,}7821 & PASS \\
+Serial P1 ($m=3$) & 0{,}2444 & PASS \\
+Serial P2 ($m=3$) & 0{,}1028 & PASS \\
+\bottomrule
+\end{tabular}
+\caption{NIST SP 800-22 results on $256\,000$-bit stream from $1000$ independent runs.}
+\label{tab:nist}
+\end{table}
+
+\section{Preliminary Evaluation of Future Parameter Families}\label{app:preliminary}
+
+This appendix reports empirical data for parameter families that are formulated as Open Problems~\ref{prob:iot} and~\ref{prob:pq128} rather than production profiles, together with the original (pre-recalibration) empirical data for the HighSec Classical profile. These data represent preliminary foundational validation; full calibration per the design rationale of Section~\ref{sec:rationale} and follow-up attacker evaluation remain open.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrrrrrl}
+\toprule
+Family & $L$ & $N$ & $h_{AB}$ & $h_{BA}$ & $h_P$ & $\lambda_\text{preimage}$ & Flooding set & Status \\
+\midrule
+IoT (preliminary) & 16 & 1024 & 4 & 2 & 4 & 80 & $2^{48}$ & Open Problem~\ref{prob:iot} \\
+PQ128 (preliminary) & 64 & 8192 & 16 & 8 & 8 & 256 & $2^{256}$ & Open Problem~\ref{prob:pq128} \\
+\bottomrule
+\end{tabular}
+\caption{Preliminary parameter values for research parameter families. These are the historical parameters under which the data below were collected; they are not recommended production values and are subject to re-calibration per Section~\ref{sec:rationale}.}
+\label{tab:profiles-baseline}
+\end{table}
+
+\paragraph{IoT preliminary validation (100 keys).}
+$200/200$ FH, $200/200$ KM, iter(median) $= 68$. NIST $11/12$ PASS, $1$ N/A (Binary Matrix Rank skipped due to insufficient input length).
+
+\paragraph{PQ128 preliminary validation (100 keys).}
+$50/50$ FH, $50/50$ KM, iter(median) $= 69$. NIST $10/12$ PASS, $1$ N/A, $1$ marginal FAIL (Block Frequency, $p = 0{,}0035$) disambiguated as noise by re-run at $500$ keys ($12/12$ PASS, Block Frequency $p = 0{,}193$).
+
+\paragraph{HighSec Classical preliminary validation (100 keys).}
+Original parameters $L = 32, N = 8192, h_{AB} = 8, h_{BA} = 3, h_P = 5$ gave $200/200$ FH, $200/200$ KM, iter(median) $= 89$. NIST $11/12$ PASS, $1$ N/A. Note: HighSec Classical as production profile in Table~\ref{tab:profiles} uses re-calibrated values $h_{AB} = 6, h_{BA} = 3, h_P = 6$ per design rationale; empirical re-validation is pending F16.
+
+\paragraph{Interpretation.} These results establish that the Grata Cascade construction achieves convergence and statistical uniformity across diverse parameter settings spanning $L \in \{16, 32, 64\}$ and $N \in \{1024, 8192\}$ with $\lambda_\text{preimage} \in [80, 256]$ bits. The foundational claims of the construction (convergence, NIST uniformity, passive adversary resistance) are robust across this parameter range. Full calibration of future parameter families per Section~\ref{sec:rationale} design rationale, including flooding-set size analysis and per-family attacker evaluation (B.1--B.4), is future work.
+
+\bigskip
+\bibliographystyle{plain}
+
+\begin{thebibliography}{99}
+
+\bibitem{ACD19} J.~Alwen, S.~Coretti, Y.~Dodis. \emph{The Double Ratchet: Security Notions, Proofs, and Modularization for the Signal Protocol}. EUROCRYPT 2019.
+
+\bibitem{KKK2002} I.~Kanter, W.~Kinzel, E.~Kanter. \emph{Secure exchange of information by synchronization of neural networks}. Europhysics Letters 57(1):141--147, 2002.
+
+\bibitem{KMS2003} A.~Klimov, A.~Mityagin, A.~Shamir. \emph{Analysis of neural cryptography}. ASIACRYPT 2002.
+
+\bibitem{Merkle1978} R.~C.~Merkle. \emph{Secure communications over insecure channels}. Communications of the ACM 21(4):294--299, 1978.
+
+\bibitem{IR1989} R.~Impagliazzo, S.~Rudich. \emph{Limits on the provable consequences of one-way permutations}. STOC 1989.
+
+\bibitem{SPQR2025} Signal Foundation et~al. \emph{Sparse Post-Quantum Ratchet (SPQR)}. EUROCRYPT 2025, USENIX Security 2025.
+
+\bibitem{PQXDH} Signal Foundation. \emph{The PQXDH Key Agreement Protocol}. Specification, 2024.
+
+\bibitem{DR2017} K.~Cohn-Gordon, C.~Cremers, B.~Dowling, L.~Garratt, D.~Stebila. \emph{A Formal Security Analysis of the Signal Messaging Protocol}. EuroS\&P 2017.
+
+\bibitem{JW1999} A.~Juels, M.~Wattenberg. \emph{A fuzzy commitment scheme}. CCS 1999.
+
+\bibitem{Dodis2004} Y.~Dodis, L.~Reyzin, A.~Smith. \emph{Fuzzy extractors}. EUROCRYPT 2004.
+
+\bibitem{NIST800-22} L.~E.~Bassham et~al. \emph{A Statistical Test Suite for Random and Pseudorandom Number Generators for Cryptographic Applications}. NIST Special Publication 800-22 Revision 1a, 2010.
+
+\bibitem{xwing} D.~Connolly, P.~Schwabe, B.~Westerbaan. \emph{X-Wing: The Hybrid KEM You've Been Looking For}. Cryptology ePrint Archive, Paper 2024/039, 2024. \url{https://eprint.iacr.org/2024/039}.
+
+\bibitem{SPHINCS+} National Institute of Standards and Technology. \emph{Stateless Hash-Based Digital Signature Standard}. FIPS 205, August 2024.
+
+\bibitem{F4Calibration} R.~Jaru\v{s}ek (Grata Luma s.r.o.). \emph{F4 probability-threshold calibration sweeps for Grata Cascade reference v1}. Internal report, 2026. \url{https://github.com/GrataLuma/Cascade/blob/main/EmpiricalEvaluation/reports/probability_thresholds_calibration.md}.
+
+\end{thebibliography}
+
+\end{document}

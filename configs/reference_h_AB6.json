@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "name": "reference_h_AB6",
+  "description": "H_AB=6 ablation profile for paper Open Problem prob:hab-residual. Identical to reference v2 EXCEPT h_AB=5->6: tests prediction that incrementing h_AB from 5 to 6 reduces per-round H_AB-collision probability by 2^8=256x, with predicted residual KM divergence rate ~3.1e-7 (vs reference v2's 8e-5). Bandwidth cost: +N*1 byte = +4 KB/round at N=4096. lambda_preimage = 8*(6+2+8) = 128 bits (vs reference 120). Research-only ablation cell, NOT a deployment profile.",
+  "calibration_status": "research_h_AB6_ablation",
+  "protocol": {
+    "vector_length": 32,
+    "vector_count": 4096,
+    "hash_length_ab": 6,
+    "hash_length_ba": 2,
+    "hash_length_password": 8,
+    "seed_min_max": 4,
+    "aes_passed_vectors_count": 8,
+    "update_probability": 0.75,
+    "termination_threshold_log2": -512,
+    "cut_limit_probability_log2": -8,
+    "candidate_max_probability_log2": -8,
+    "cut_limit_safety_attempts": 1000,
+    "max_iterations": 500
+  },
+  "rng": {
+    "type": "crypto",
+    "seed": null
+  }
+}

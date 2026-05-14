@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "name": "low_resource_iot",
+  "description": "IoT profile under reference v2: L=16, N=1024 preserved (memory-constrained devices); v2 design philosophy applied where it scales (s 3->4 sparsity, CandMax disabled = -8 same as cut_limit, MaxIter=500 explicit). h_P=4 retained as IoT semantics (32-bit Final hashes, lambda_preimage = 80 bits low-resource trade-off vs. reference v2's 120 bits). Carries forward v1 F13 closure (h_P=3->4 to close 2.5% KeysMatch gap). Replaces v1 calibration; pending F13-v2 re-validation.",
+  "calibration_status": "calibrated_f13_v2",
+  "protocol": {
+    "vector_length": 16,
+    "vector_count": 1024,
+    "hash_length_ab": 4,
+    "hash_length_ba": 2,
+    "hash_length_password": 4,
+    "seed_min_max": 4,
+    "aes_passed_vectors_count": 8,
+    "update_probability": 0.75,
+    "termination_threshold_log2": -512,
+    "cut_limit_probability_log2": -8,
+    "candidate_max_probability_log2": -8,
+    "cut_limit_safety_attempts": 1000,
+    "max_iterations": 500
+  },
+  "rng": {
+    "type": "crypto",
+    "seed": null
+  }
+}

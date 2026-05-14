@@ -1,0 +1,628 @@
+@page "/demo"
+@using Demo.Client.Services
+@inject NavigationManager Nav
+@inject HttpClient Http
+@inject ProtocolDriver Driver
+@inject ConfigurationProbe ConfigProbe
+@inject LanguageService Lang
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>Grata Cascade demo</PageTitle>
+
+@{
+    // Personal accent: tab vlastní handle barva propsaná do CSS vars
+    // (--gc-own-color, --gc-own-color-on). Status badge, progress bar
+    // a LOCAL panel header berou přes var(--gc-own-color). Při null
+    // handle fallback na akademickou modrou. PEER panel zůstává
+    // neutrální (Bootstrap default), peer's barva se promítá jen do
+    // swatche vedle handle name.
+    var ownColor = Driver.OwnHandle != null ? HandleColors.ForHandle(Driver.OwnHandle) : "#1f4e79";
+    var ownOn    = Driver.OwnHandle != null ? HandleColors.OnColor(Driver.OwnHandle)   : "#ffffff";
+    var personalStyle = $"--gc-own-color: {ownColor}; --gc-own-color-on: {ownOn};";
+}
+
+<div class="d-flex justify-content-between align-items-baseline mb-3">
+    <h1 class="mb-0">Demo</h1>
+    <a href="/" class="small">@(Lang.IsCs ? "← O projektu" : "← About")</a>
+</div>
+
+<div class="gc-personalized" style="@personalStyle">
+
+<!-- Top bar: own handle (s rolí + status) | větší gap | peer handle | controls -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap align-items-center" style="row-gap: 0.5rem; column-gap: 2.5rem;">
+
+            <!-- Own group: vlastní jméno + status + role -->
+            <div class="d-flex flex-wrap align-items-center" style="gap: 0.75rem;">
+                <span class="text-muted small">@(Lang.IsCs ? "Tvoje jméno:" : "Your handle:")</span>
+                @if (Driver.OwnHandle != null)
+                {
+                    <span class="gc-handle-with-swatch">
+                        <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.OwnHandle) ? "bordered" : "")"
+                              style="background: @HandleColors.ForHandle(Driver.OwnHandle)"></span>
+                        <span class="handle-name">@Driver.OwnHandle</span>
+                    </span>
+                }
+                else
+                {
+                    <span class="handle-name">—</span>
+                }
+                <span class="badge badge-phase @PhaseBadgeClass">@PhaseLabel</span>
+                @if (Driver.Role != null)
+                {
+                    <span class="badge bg-secondary">@(Lang.IsCs ? "tvoje role" : "your role"): @Driver.Role</span>
+                }
+            </div>
+
+            <!-- Peer group: jméno peera (žádný role badge tady — peer's role je
+                 odvozená z mé role; navíc role tady mátla) -->
+            @if (Driver.PeerHandle != null)
+            {
+                <div class="d-flex flex-wrap align-items-center" style="gap: 0.75rem;">
+                    <span class="text-muted small">@(Lang.IsCs ? "Spárován s:" : "Paired with:")</span>
+                    <span class="gc-handle-with-swatch">
+                        <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.PeerHandle) ? "bordered" : "")"
+                              style="background: @HandleColors.ForHandle(Driver.PeerHandle)"></span>
+                        <span class="handle-name">@Driver.PeerHandle</span>
+                    </span>
+                </div>
+            }
+
+            <!-- Controls: pushed right -->
+            <div class="ms-auto d-flex gap-2">
+                <button class="btn btn-outline-danger btn-sm"
+                        disabled="@(!Driver.IsConnected)"
+                        @onclick="OnDisconnectClick">
+                    Disconnect
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" @onclick="OnResetClick">
+                    Reset
+                </button>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- ========================================================== -->
+<!-- SUCCESS CARD AT TOP — viditelný hned po Final, před progress -->
+<!-- a split-view. Plný K* hex, prominent Safety Number.            -->
+<!-- ========================================================== -->
+@if (Driver.Phase == DriverPhase.Converged)
+{
+    <div class="gc-success-top fade-in">
+        <div class="gc-success-title">
+            @(Lang.IsCs ? "Klíč úspěšně dohodnut" : "Key successfully agreed")
+        </div>
+
+        <p class="mb-2">
+            @if (Lang.IsCs)
+            {
+                <text>
+                    <span class="gc-handle-with-swatch">
+                        <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.OwnHandle) ? "bordered" : "")"
+                              style="background: @HandleColors.ForHandle(Driver.OwnHandle)"></span>
+                        <span class="handle-name">@Driver.OwnHandle</span>
+                    </span>
+                    a
+                    <span class="gc-handle-with-swatch">
+                        <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.PeerHandle) ? "bordered" : "")"
+                              style="background: @HandleColors.ForHandle(Driver.PeerHandle)"></span>
+                        <span class="handle-name">@Driver.PeerHandle</span>
+                    </span>
+                    dokončili Cascade protokol po @Driver.Round&nbsp;kolech.
+                    Každá strana lokálně odvodila 32-bytový klíč
+                    <span class="text-monospace">K*</span>.
+                </text>
+            }
+            else
+            {
+                <text>
+                    <span class="gc-handle-with-swatch">
+                        <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.OwnHandle) ? "bordered" : "")"
+                              style="background: @HandleColors.ForHandle(Driver.OwnHandle)"></span>
+                        <span class="handle-name">@Driver.OwnHandle</span>
+                    </span>
+                    and
+                    <span class="gc-handle-with-swatch">
+                        <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.PeerHandle) ? "bordered" : "")"
+                              style="background: @HandleColors.ForHandle(Driver.PeerHandle)"></span>
+                        <span class="handle-name">@Driver.PeerHandle</span>
+                    </span>
+                    completed the Cascade protocol after @Driver.Round&nbsp;rounds.
+                    Each side locally derived a 32-byte key
+                    <span class="text-monospace">K*</span>.
+                </text>
+            }
+        </p>
+
+        <div class="gc-verify-note">
+            <div class="gc-verify-note-title">
+                @(Lang.IsCs
+                    ? "⚠ Co toto potvrzuje — a co ne"
+                    : "⚠ What this confirms — and what it doesn't")
+            </div>
+            @if (Lang.IsCs)
+            {
+                <text>
+                    Tvoje strana přijala Final zprávu a lokálně vypočítala
+                    <span class="text-monospace">K*</span> — protokol skončil.
+                    <strong>Toto však samo o sobě nepotvrzuje, že peer drží
+                    identický klíč.</strong> Aktivní MITM (mimo paper §1.5
+                    threat model, a tento honest-relay demo to nedetekuje)
+                    by mohl s každou stranou vyjednat jiný
+                    <span class="text-monospace">K*</span>. Pro skutečné
+                    ověření shody porovnej <strong>Safety Number níže</strong>
+                    s peerem <em>out-of-band</em> (telefon, druhá obrazovka,
+                    IRL). Sedí-li u obou stran totožně, klíče
+                    <span class="text-monospace">K*</span> jsou identické.
+                </text>
+            }
+            else
+            {
+                <text>
+                    Your side received the Final message and locally derived
+                    <span class="text-monospace">K*</span> — the protocol
+                    terminated. <strong>This alone does not confirm that the
+                    peer holds an identical key.</strong> An active MITM
+                    (outside the paper §1.5 threat model, which this
+                    honest-relay demo does not detect) could have negotiated
+                    a different <span class="text-monospace">K*</span> with
+                    each side. Verify the actual match by comparing the
+                    <strong>Safety Number below</strong> with your peer
+                    <em>out-of-band</em> (phone, second screen, in person).
+                    If both sides show identical numbers, the
+                    <span class="text-monospace">K*</span> values are
+                    identical.
+                </text>
+            }
+        </div>
+
+        <div class="gc-safety-block">
+            <div class="gc-safety-label">
+                @(Lang.IsCs
+                    ? "Safety Number — porovnejte s peerem (out-of-band)"
+                    : "Safety Number — compare with peer (out-of-band)")
+            </div>
+            <div class="gc-safety-value">@Driver.KStarSafetyNumber</div>
+            <p class="small text-muted mb-0 mt-2">
+                @(Lang.IsCs
+                    ? "SHA256(K*) posledních 4 bytes. Shoda u obou stran = identický K*."
+                    : "Last 4 bytes of SHA256(K*). Match on both sides = identical K*.")
+            </p>
+        </div>
+
+        <div class="gc-kstar-block">
+            <div class="gc-safety-label">
+                @(Lang.IsCs
+                    ? "Plný klíč K* (32 bytes / 64 hex)"
+                    : "Full key K* (32 bytes / 64 hex)")
+            </div>
+            <pre class="gc-kstar-value">@Driver.KStarHex</pre>
+            <p class="small text-muted mb-0 mt-2">
+                @(Lang.IsCs
+                    ? "Pro reálné nasazení by se K* extraktoval do session key přes HKDF. Demo zde končí."
+                    : "In a real deployment K* would be passed through HKDF-Extract to derive a session key. The demo ends here.")
+            </p>
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(Driver.LastError)
+     && Driver.Phase != DriverPhase.Failed
+     && _dismissedError != Driver.LastError)
+{
+    <div class="alert alert-warning alert-dismissible fade-in" role="alert">
+        <small>@Driver.LastError</small>
+        <button type="button" class="btn-close"
+                @onclick="() => _dismissedError = Driver.LastError"
+                aria-label="@(Lang.IsCs ? "Skrýt" : "Dismiss")"></button>
+    </div>
+}
+
+@if (Driver.Phase == DriverPhase.Connecting)
+{
+    <div class="alert alert-secondary d-flex align-items-center fade-in">
+        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+        @(Lang.IsCs ? "Připojuji se k lobby…" : "Connecting to lobby…")
+    </div>
+}
+else if (Driver.Phase == DriverPhase.Disconnected)
+{
+    <div class="alert alert-secondary fade-in">
+        @if (Lang.IsCs)
+        {
+            <strong>Odpojen.</strong> <text>Klikni </text><em>Reset</em> <text>pro nové spojení.</text>
+        }
+        else
+        {
+            <strong>Disconnected.</strong> <text>Click </text><em>Reset</em> <text>to reconnect.</text>
+        }
+    </div>
+}
+else if (Driver.Phase == DriverPhase.InLobby)
+{
+    <div class="card mb-3 fade-in">
+        <div class="card-header">
+            <h5 class="mb-0">
+                @if (Lang.IsCs)
+                {
+                    <text>Lobby — online uživatelé (@Driver.LobbyClients.Count)</text>
+                }
+                else
+                {
+                    <text>Lobby — online users (@Driver.LobbyClients.Count)</text>
+                }
+            </h5>
+        </div>
+        <div class="card-body">
+            @if (Driver.LobbyClients.Count == 0)
+            {
+                <p class="text-muted mb-0">
+                    @(Lang.IsCs
+                        ? "Nikdo jiný zatím není online. Sdílej URL stránky a počkej na peera."
+                        : "No one else is online yet. Share the page URL and wait for a peer.")
+                </p>
+            }
+            else
+            {
+                <div class="list-group">
+                    @foreach (var handle in Driver.LobbyClients)
+                    {
+                        <div class="list-group-item lobby-row d-flex justify-content-between align-items-center">
+                            <span class="gc-handle-with-swatch">
+                                <span class="gc-swatch @(HandleColors.NeedsBorder(handle) ? "bordered" : "")"
+                                      style="background: @HandleColors.ForHandle(handle)"></span>
+                                <span class="handle-name">@handle</span>
+                            </span>
+                            <button class="btn btn-primary btn-sm" @onclick="() => OnPairClick(handle)">
+                                Pair
+                            </button>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+else if (Driver.Phase == DriverPhase.OutgoingRequest)
+{
+    <div class="card mb-3 fade-in">
+        <div class="card-body">
+            <div class="d-flex align-items-center mb-3">
+                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                <span>
+                    @(Lang.IsCs ? "Čekám na odpověď od" : "Waiting for response from")
+                    <span class="gc-handle-with-swatch">
+                        <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.PendingOutgoingTo) ? "bordered" : "")"
+                              style="background: @HandleColors.ForHandle(Driver.PendingOutgoingTo)"></span>
+                        <span class="handle-name">@Driver.PendingOutgoingTo</span>
+                    </span>…
+                </span>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="OnCancelPairClick">
+                @(Lang.IsCs ? "Zrušit požadavek" : "Cancel request")
+            </button>
+        </div>
+    </div>
+}
+else if (Driver.Phase == DriverPhase.IncomingRequest)
+{
+    <div class="card mb-3 border-primary fade-in">
+        <div class="card-body">
+            <h5 class="card-title">@(Lang.IsCs ? "Příchozí pair request" : "Incoming pair request")</h5>
+            <p class="card-text">
+                <span class="gc-handle-with-swatch">
+                    <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.PendingIncomingFrom) ? "bordered" : "")"
+                          style="background: @HandleColors.ForHandle(Driver.PendingIncomingFrom)"></span>
+                    <span class="handle-name">@Driver.PendingIncomingFrom</span>
+                </span>
+                @(Lang.IsCs
+                    ? "tě chce zahájit Grata Cascade key agreement."
+                    : "wants to initiate a Grata Cascade key agreement.")
+            </p>
+            <div class="d-flex gap-2">
+                <button class="btn btn-success" @onclick="OnAcceptPairClick">
+                    @(Lang.IsCs ? "Přijmout" : "Accept")
+                </button>
+                <button class="btn btn-outline-secondary" @onclick="OnRejectPairClick">
+                    @(Lang.IsCs ? "Odmítnout" : "Reject")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+else if (Driver.Phase == DriverPhase.Running || Driver.Phase == DriverPhase.Converged)
+{
+    <!-- Progress bar -->
+    <div class="mb-2 small d-flex justify-content-between">
+        <span>
+            @(Lang.IsCs ? "Kolo" : "Round") @Driver.Round @(Lang.IsCs ? "/ medián 49" : "/ median 49")
+        </span>
+        <span class="text-muted">
+            Hard cap @ProtocolDriver.MaxIterations
+        </span>
+    </div>
+    <div class="progress mb-3" style="height: 18px;">
+        <div class="progress-bar @(Driver.Round > 49 ? "bg-warning" : "gc-own-fill")"
+             role="progressbar"
+             style="width: @ProgressPercent%;"
+             aria-valuenow="@Driver.Round" aria-valuemin="0" aria-valuemax="@ProtocolDriver.MaxIterations">
+            @Driver.Round
+        </div>
+        @if (Driver.Round > 49)
+        {
+            <div class="progress-bar progress-overflow" role="progressbar"
+                 style="width: @OverflowPercent%;"></div>
+        }
+    </div>
+
+    <!-- Split view: LOCAL | PEER -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-6">
+            <div class="card diag-card gc-border-own">
+                <div class="card-header gc-bg-own">
+                    @(Lang.IsCs ? "LOKÁLNĚ" : "LOCAL") —
+                    <span class="gc-handle-with-swatch">
+                        <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.OwnHandle) ? "bordered" : "")"
+                              style="background: @HandleColors.ForHandle(Driver.OwnHandle)"></span>
+                        <span class="handle-name" style="color: var(--gc-own-color-on);">@Driver.OwnHandle</span>
+                    </span>
+                    <span class="badge bg-light text-dark ms-2">role @Driver.Role</span>
+                </div>
+                <div class="card-body">
+                    <dl class="mb-0 small">
+                        <dt>@(Lang.IsCs ? "Fáze" : "Phase")</dt>
+                        <dd>@PhaseLabel</dd>
+                        <dt>@(Lang.IsCs ? "Kolo" : "Round")</dt>
+                        <dd>@Driver.Round</dd>
+                        <dt>FillRejections</dt>
+                        <dd>@Driver.FillRejections</dd>
+                        <dt>FillSafetyTriggers</dt>
+                        <dd>@Driver.FillSafetyTriggers</dd>
+                        @if (Driver.RoundsSkippedByF4Filter.HasValue)
+                        {
+                            <dt>RoundsSkippedByF4Filter</dt>
+                            <dd>@Driver.RoundsSkippedByF4Filter.Value</dd>
+                        }
+                    </dl>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card diag-card">
+                <div class="card-header bg-light">
+                    PEER —
+                    <span class="gc-handle-with-swatch">
+                        <span class="gc-swatch @(HandleColors.NeedsBorder(Driver.PeerHandle) ? "bordered" : "")"
+                              style="background: @HandleColors.ForHandle(Driver.PeerHandle)"></span>
+                        <span class="handle-name">@Driver.PeerHandle</span>
+                    </span>
+                    <span class="badge bg-secondary ms-2">role @(Driver.Role == "A" ? "B" : "A")</span>
+                </div>
+                <div class="card-body">
+                    <dl class="mb-0 small">
+                        <dt>@(Lang.IsCs ? "Aktivita" : "Activity")</dt>
+                        <dd>
+                            <span class="peer-active-dot @(Driver.Phase == DriverPhase.Running ? "" : "inactive")"></span>
+                            @if (Driver.Phase == DriverPhase.Running)
+                            {
+                                <text>@(Lang.IsCs ? "online (relay aktivní)" : "online (relay active)")</text>
+                            }
+                            else
+                            {
+                                <text>—</text>
+                            }
+                        </dd>
+                        <dt>@(Lang.IsCs ? "Poslední viděné kolo" : "Last seen round")</dt>
+                        <dd>@Driver.PeerLastSeenRound</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+else if (Driver.Phase == DriverPhase.Failed)
+{
+    <div class="alert alert-danger fade-in">
+        @if (Lang.IsCs)
+        {
+            <strong>Chyba:</strong> <text> @Driver.LastError</text>
+            <hr />
+            <p class="mb-0 small">Klikni <em>Reset</em> pro restart nebo <em>Disconnect</em> a otevři novou kartu.</p>
+        }
+        else
+        {
+            <strong>Error:</strong> <text> @Driver.LastError</text>
+            <hr />
+            <p class="mb-0 small">Click <em>Reset</em> to restart, or <em>Disconnect</em> and open a new tab.</p>
+        }
+    </div>
+}
+
+</div>
+<!-- /.gc-personalized -->
+
+<!-- Demo-only disclaimer -->
+<div class="card mt-4 border-warning">
+    <div class="card-body small">
+        <strong class="text-warning">⚠ Demo only.</strong>
+        @if (Lang.IsCs)
+        {
+            <text>
+                Server je čestný relay — neposkytuje ochranu proti aktivnímu útočníkovi.
+                Tohle je paper §1.5 passive-adversary scenario. Pro reálné nasazení je
+                nutný autentizovaný transport (TLS + OOB verification klíčů).
+            </text>
+        }
+        else
+        {
+            <text>
+                The server is an honest relay — it does not protect against an active
+                adversary. This is the paper §1.5 passive-adversary scenario. Real-world
+                deployment requires authenticated transport (TLS + OOB key verification).
+            </text>
+        }
+        <button class="btn btn-link btn-sm p-0 ms-2" type="button"
+                @onclick="() => _showDisclaimerDetails = !_showDisclaimerDetails">
+            @if (Lang.IsCs)
+            {
+                <text>@(_showDisclaimerDetails ? "Skrýt detaily" : "Více o útočníkovi")</text>
+            }
+            else
+            {
+                <text>@(_showDisclaimerDetails ? "Hide details" : "More about the attacker")</text>
+            }
+        </button>
+        <div class="mt-2 @(_showDisclaimerDetails ? "" : "d-none")">
+            <table class="table table-sm small mb-0">
+                <thead>
+                    <tr>
+                        <th>@(Lang.IsCs ? "Scénář" : "Scenario")</th>
+                        <th>@(Lang.IsCs ? "Útočník" : "Attacker")</th>
+                        <th>@(Lang.IsCs ? "Demo brání?" : "Demo defends?")</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @if (Lang.IsCs)
+                {
+                    <tr>
+                        <td>Passive eavesdropping</td>
+                        <td>Pasivní (jen odposlech)</td>
+                        <td><span class="text-success">✓ ano</span> — paper §1.5</td>
+                    </tr>
+                    <tr>
+                        <td>Active MITM</td>
+                        <td>Aktivní (manipulace zpráv)</td>
+                        <td><span class="text-danger">✗ ne</span> — server <em>je</em> MITM</td>
+                    </tr>
+                    <tr>
+                        <td>Replay / DoS / flood</td>
+                        <td>Aktivní</td>
+                        <td><span class="text-danger">✗ ne</span> — žádný rate-limit, signed transport</td>
+                    </tr>
+                }
+                else
+                {
+                    <tr>
+                        <td>Passive eavesdropping</td>
+                        <td>Passive (read only)</td>
+                        <td><span class="text-success">✓ yes</span> — paper §1.5</td>
+                    </tr>
+                    <tr>
+                        <td>Active MITM</td>
+                        <td>Active (message manipulation)</td>
+                        <td><span class="text-danger">✗ no</span> — the server <em>is</em> the MITM</td>
+                    </tr>
+                    <tr>
+                        <td>Replay / DoS / flood</td>
+                        <td>Active</td>
+                        <td><span class="text-danger">✗ no</span> — no rate-limit, no signed transport</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@if (ConfigProbe.Loaded)
+{
+    <p class="text-muted small mt-3 mb-0">
+        @if (Lang.IsCs)
+        {
+            <text>
+                Config: <code>@ConfigProbe.Name</code> (schema @ConfigProbe.SchemaVersion).
+                Protokol běží na reference v2 parametrech (L=32, N=4096, h_AB=5, h_BA=2, h_P=8, M=8, p_upd=0.75, λ≈120 b).
+            </text>
+        }
+        else
+        {
+            <text>
+                Config: <code>@ConfigProbe.Name</code> (schema @ConfigProbe.SchemaVersion).
+                Protocol runs on reference v2 parameters (L=32, N=4096, h_AB=5, h_BA=2, h_P=8, M=8, p_upd=0.75, λ≈120 b).
+            </text>
+        }
+    </p>
+}
+
+@code {
+    private string _dismissedError;
+    private bool _showDisclaimerDetails;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Driver.OnStateChanged += OnDriverStateChanged;
+        Lang.OnChanged += OnLangChanged;
+        await ConfigProbe.FetchAsync(Http);
+        await Driver.ConnectAsync();
+    }
+
+    private void OnDriverStateChanged() => InvokeAsync(StateHasChanged);
+    private void OnLangChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task OnPairClick(string targetHandle) => await Driver.RequestPairAsync(targetHandle);
+    private async Task OnAcceptPairClick() => await Driver.AcceptPairAsync();
+    private async Task OnRejectPairClick() => await Driver.RejectPairAsync();
+    private async Task OnCancelPairClick() => await Driver.CancelPairRequestAsync();
+    private async Task OnDisconnectClick() => await Driver.DisconnectAsync();
+    private async Task OnResetClick() => await JS.InvokeVoidAsync("location.reload");
+
+    private int ProgressPercent => Driver.Round <= 0
+        ? 0
+        : (int)Math.Min(100, (Driver.Round / 49.0) * 100);
+
+    private int OverflowPercent => Driver.Round <= 49
+        ? 0
+        : (int)Math.Min(100, ((Driver.Round - 49) / (double)(ProtocolDriver.MaxIterations - 49)) * 100);
+
+    private string PhaseLabel => Lang.IsCs
+        ? Driver.Phase switch
+        {
+            DriverPhase.Disconnected => "Odpojen",
+            DriverPhase.Connecting => "Připojuji",
+            DriverPhase.InLobby => "V lobby",
+            DriverPhase.OutgoingRequest => "Čekám na peer",
+            DriverPhase.IncomingRequest => "Příchozí request",
+            DriverPhase.Running => "Probíhá",
+            DriverPhase.Converged => "Konvergováno",
+            DriverPhase.Failed => "Chyba",
+            _ => "—"
+        }
+        : Driver.Phase switch
+        {
+            DriverPhase.Disconnected => "Disconnected",
+            DriverPhase.Connecting => "Connecting",
+            DriverPhase.InLobby => "In lobby",
+            DriverPhase.OutgoingRequest => "Awaiting peer",
+            DriverPhase.IncomingRequest => "Incoming request",
+            DriverPhase.Running => "Running",
+            DriverPhase.Converged => "Converged",
+            DriverPhase.Failed => "Failed",
+            _ => "—"
+        };
+
+    // Personal phases (Running, Converged) → vlastní handle barva
+    // přes gc-bg-own utility (čte var(--gc-own-color)). Neutrální /
+    // error phases dál Bootstrap semantic colors.
+    private string PhaseBadgeClass => Driver.Phase switch
+    {
+        DriverPhase.Converged => "gc-bg-own",
+        DriverPhase.Running => "gc-bg-own",
+        DriverPhase.Failed => "bg-danger",
+        DriverPhase.OutgoingRequest => "bg-warning text-dark",
+        DriverPhase.IncomingRequest => "bg-info text-dark",
+        DriverPhase.InLobby => "bg-secondary",
+        DriverPhase.Connecting => "bg-info text-dark",
+        _ => "bg-secondary"
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        Driver.OnStateChanged -= OnDriverStateChanged;
+        Lang.OnChanged -= OnLangChanged;
+        await Driver.DisposeAsync();
+    }
+}
